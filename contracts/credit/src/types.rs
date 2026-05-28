@@ -61,6 +61,7 @@ pub enum CreditStatus {
 /// | 27   | `InsufficientRepaymentBalance` | Borrower balance cannot cover repayment |
 /// | 28   | `RepayExceedsMaxAmount`        | Repay amount exceeds per-transaction cap |
 /// | 29   | `DrawCooldownActive`          | Borrower attempted to draw before cooldown elapsed |
+/// | 30   | `TimestampRegression`         | Timestamp would move backward (monotonicity violation) |
 #[soroban_sdk::contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -123,6 +124,8 @@ pub enum ContractError {
     RepayExceedsMaxAmount = 28,
     /// Borrower attempted to draw again before the cooldown interval elapsed.
     DrawCooldownActive = 29,
+    /// A timestamp write would move the stored value backward (monotonicity violation).
+    TimestampRegression = 30,
 }
 
 /// Stored credit line data for a borrower.

@@ -6,6 +6,7 @@
 //! that would write a timestamp <= the stored value, simulating a regressed
 //! ledger clock.
 
+use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{Address, Env};
 
@@ -173,4 +174,106 @@ fn accrual_ts_regression_is_noop() {
 
     let line_after = client.get_credit_line(&borrower);
     assert_eq!(line_after.last_accrual_ts, ts_before);
+}
+
+// ── Property test: monotonicity over randomized operation sequences ──────────
+
+/// Operations that can write timestamps on a credit line.
+#[derive(Debug, Clone)]
+enum Op {
+    /// update_risk_parameters with a new rate (triggers last_rate_update_ts write)
+    UpdateRate { new_rate: u32 },
+    /// suspend_credit_line (triggers suspension_ts write)
+    Suspend,
+    /// reinstate_credit_line to Active after default (clears suspension_ts to 0)
+    DefaultThenReinstate,
+}
+
+fn arb_op() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        (1u32..=800u32).prop_map(|r| Op::UpdateRate { new_rate: r }),
+        Just(Op::Suspend),
+        Just(Op::DefaultThenReinstate),
+    ]
+}
+
+proptest! {
+    /// Over any sequence of operations with a strictly-advancing ledger clock,
+    /// `last_accrual_ts` and `last_rate_update_ts` must never decrease.
+    ///
+    /// The ledger timestamp advances by a positive delta before each operation,
+    /// so the clock is always strictly increasing. After each operation the test
+    /// asserts both timestamp fields are >= their previous values.
+    #[test]
+    fn prop_timestamps_monotonic_over_op_sequence(
+        ops in proptest::collection::vec(arb_op(), 1..20),
+        deltas in proptest::collection::vec(1u64..=500u64, 1..20),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(Credit, ());
+        let client = CreditClient::new(&env, &contract_id);
+        env.ledger().with_mut(|li| li.timestamp = 1_000);
+        client.init(&admin);
+
+        let borrower = Address::generate(&env);
+        client.open_credit_line(&borrower, &10_000_i128, &500_u32, &10_u32);
+
+        let mut ts: u64 = 1_000;
+        let mut prev_accrual_ts = client.get_credit_line(&borrower).last_accrual_ts;
+        let mut prev_rate_ts = client.get_credit_line(&borrower).last_rate_update_ts;
+        let mut is_suspended = false;
+
+        for (op, delta) in ops.iter().zip(deltas.iter().cycle()) {
+            ts += delta;
+            env.ledger().with_mut(|li| li.timestamp = ts);
+
+            match op {
+                Op::UpdateRate { new_rate } => {
+                    if !is_suspended {
+                        let _ = client.try_update_risk_parameters(
+                            &borrower,
+                            &10_000_i128,
+                            new_rate,
+                            &10_u32,
+                        );
+                    }
+                }
+                Op::Suspend => {
+                    if !is_suspended {
+                        let _ = client.try_suspend_credit_line(&borrower);
+                        is_suspended = true;
+                    }
+                }
+                Op::DefaultThenReinstate => {
+                    // Default then immediately reinstate to Active — exercises
+                    // the reinstate path which clears suspension_ts to 0.
+                    let _ = client.try_default_credit_line(&borrower);
+                    let _ = client.try_reinstate_credit_line(&borrower, &CreditStatus::Active);
+                    is_suspended = false;
+                }
+            }
+
+            let line = client.get_credit_line(&borrower);
+
+            prop_assert!(
+                line.last_accrual_ts >= prev_accrual_ts,
+                "last_accrual_ts regressed: {} < {} at ts={}",
+                line.last_accrual_ts,
+                prev_accrual_ts,
+                ts
+            );
+            prop_assert!(
+                line.last_rate_update_ts >= prev_rate_ts,
+                "last_rate_update_ts regressed: {} < {} at ts={}",
+                line.last_rate_update_ts,
+                prev_rate_ts,
+                ts
+            );
+
+            prev_accrual_ts = line.last_accrual_ts;
+            prev_rate_ts = line.last_rate_update_ts;
+        }
+    }
 }

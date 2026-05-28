@@ -15,15 +15,8 @@ mod config;
 pub mod events;
 mod freeze;
 mod lifecycle;
-mod query;
-mod accrual;
 mod math_utils;
-mod risk;
-mod storage;
-pub mod types;
-use crate::storage::{DataKey, rate_cfg_key};
-use crate::auth::require_admin_auth;
-use crate::storage::{clear_reentrancy_guard, set_reentrancy_guard};
+mod query;
 mod risk;
 mod storage;
 pub mod types;
@@ -57,7 +50,6 @@ use crate::types::{
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol, Vec};
 
 pub const CONTRACT_API_VERSION: (u32, u32, u32) = (1, 0, 0);
-
 
 #[allow(dead_code)]
 const SECONDS_PER_YEAR: u64 = 31_536_000;
