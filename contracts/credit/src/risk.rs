@@ -50,25 +50,6 @@ pub const MAX_RISK_SCORE: u32 = 100;
 /// # Panics
 /// - If `max_rate_bps < min_rate_bps` (invalid range).
 ///
-/// # Example
-/// ```
-/// // Score 50 between 200 bps and 800 bps → midpoint 500 bps
-/// assert_eq!(compute_rate_from_score(50, 200, 800), 500);
-///
-/// // Score 0 → min rate
-/// assert_eq!(compute_rate_from_score(0, 200, 800), 200);
-///
-/// // Score 100 → max rate
-/// assert_eq!(compute_rate_from_score(100, 200, 800), 800);
-/// ```
-pub fn compute_rate_from_score_linear(score: u32, min_rate_bps: u32, max_rate_bps: u32) -> u32 {
-    assert!(
-        max_rate_bps >= min_rate_bps,
-        "compute_rate_from_score: max_rate_bps must be >= min_rate_bps"
-    );
-    let spread = max_rate_bps - min_rate_bps;
-    min_rate_bps + spread * score / 100
-}
 /// Compute interest rate from risk score using piecewise-linear formula.
 ///
 /// # Formula
@@ -259,6 +240,7 @@ pub fn update_risk_parameters(
 pub fn get_rate_change_limits(env: Env) -> Option<RateChangeConfig> {
     env.storage().instance().get(&rate_cfg_key(&env))
 }
+
 /// Retrieve the rate formula configuration from instance storage, if set.
 ///
 /// # Storage

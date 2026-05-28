@@ -142,16 +142,8 @@ impl Auction {
             .instance()
             .get(&Symbol::new(&env, "bid_token"));
 
-        if let Some(tkn) = token_addr.clone() {
-            let token_client = token::Client::new(&env, &tkn);
-            let contract_addr = env.current_contract_address();
-            token_client.transfer(&bidder, &contract_addr, &amount);
-        }
-
-        if let Some(prev_bidder) = state.highest_bidder.clone() {
-            let refund_amount = state.highest_bid;
-
-            publish_bid_refunded_event(&env, prev_bidder.clone(), refund_amount);
+            // Emit refund event before performing token transfer
+            publish_bid_refunded_event(&env, prev_bidder.clone(), state.highest_bid);
 
             if let Some(tkn) = token_addr {
                 let token_client = token::Client::new(&env, &tkn);

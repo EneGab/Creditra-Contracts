@@ -237,9 +237,5 @@ pub struct ProtocolConfig {
     pub liquidity_token: Option<Address>,
     /// Configured liquidity source.
     pub liquidity_source: Option<Address>,
-    /// Max absolute rate change per update, if limits are configured.
-    pub max_rate_change_bps: Option<u32>,
-    /// Minimum seconds between rate changes, if limits are configured.
-    pub rate_change_min_interval: Option<u64>,
 }
 >>>>>>> upstream/main

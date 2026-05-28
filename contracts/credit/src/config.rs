@@ -12,7 +12,7 @@
 //! See `docs/deploy.md` for the required deployment sequence.
 
 use crate::auth::require_admin_auth;
-use crate::storage::{admin_key, DataKey};
+use crate::storage::{admin_key, set_schema_version, DataKey};
 use crate::types::ContractError;
 use soroban_sdk::{Address, Env};
 

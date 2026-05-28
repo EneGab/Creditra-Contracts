@@ -35,12 +35,6 @@ pub enum DataKey {
     /// Per-borrower max utilization ratio cap in basis points (e.g. 8000 = 80%).
     /// When set, draw_credit enforces: utilized_amount <= credit_limit * cap_bps / 10_000.
     UtilizationCapBps(Address),
-    /// Protocol fee in basis points applied to interest portion of repayments.
-    ProtocolFeeBps,
-    /// Configured treasury address (where withdrawn fees will be sent).
-    TreasuryAddress,
-    /// Accumulated treasury balance held by the contract (tokens earmarked for treasury).
-    TreasuryBalance,
 }
 
 /// Maximum number of credit lines returned per page.

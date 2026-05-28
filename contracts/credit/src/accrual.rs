@@ -8,8 +8,8 @@
 
 #![warn(missing_docs)]
 
-use crate::math_utils::prorate_interest;
-use crate::types::CreditLineData;
+use crate::events::{publish_interest_accrued_event, InterestAccruedEvent};
+use crate::types::{ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode};
 use soroban_sdk::Env;
 
 /// Compute and apply accrued interest to a credit line for the elapsed period.
@@ -55,26 +55,6 @@ use soroban_sdk::Env;
 /// // interest = 1_000_000 * 500 * 86_400 / 315_360_000_000 = 137
 /// // After call: accrued_interest += 137, last_accrual_ts = 86_400
 /// ```
-pub fn apply_accrued_interest(env: &Env, credit_line: &mut CreditLineData) -> i128 {
-    let now = env.ledger().timestamp();
-    let last = credit_line.last_accrual_ts;
-    let elapsed = now.saturating_sub(last);
-    let interest = prorate_interest(
-        credit_line.utilized_amount,
-        credit_line.interest_rate_bps,
-        elapsed,
-    );
-    credit_line.accrued_interest = credit_line
-        .accrued_interest
-        .checked_add(interest)
-        .expect("apply_accrual: accrued_interest overflowed i128");
-    credit_line.last_accrual_ts = now;
-    interest
-}
-
-use crate::events::{publish_interest_accrued_event, InterestAccruedEvent};
-use crate::types::{ContractError, CreditStatus, GracePeriodConfig, GraceWaiverMode};
-
 pub(crate) const SECONDS_PER_YEAR: u64 = 31_536_000;
 
 /// Compute simple interest: `utilized * rate_bps * seconds / (10_000 * SECONDS_PER_YEAR)`.
