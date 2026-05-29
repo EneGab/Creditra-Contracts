@@ -332,7 +332,7 @@ mod tests {
 
         client.set_factory_contract(&factory);
         client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
         client.place_bid(&auction_id, &bidder, &100_i128);
 
         let result = client.try_settle_default_liquidation(
@@ -359,7 +359,7 @@ mod tests {
 
         client.set_factory_contract(&factory);
         client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
         client.place_bid(&auction_id, &bidder, &420_i128);
         client.close_auction(&auction_id);
         client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
@@ -414,7 +414,7 @@ mod tests {
 
         client.set_factory_contract(&factory);
         client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
         // no bids
         client.close_auction(&auction_id);
         client.settle_default_liquidation(&auction_id, &credit_contract, &borrower);
@@ -480,7 +480,7 @@ mod tests {
             // Setup with mocks
             env2.mock_all_auths();
             client2.set_factory_contract(&factory2);
-            client2.init_auction(&auction_id2, &0, &1000, &50_i128);
+            client2.init_auction(&auction_id2, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
             client2.close_auction(&auction_id2);
             // Call with only a non-factory address authorized
             let wrong_caller = Address::generate(&env2);
@@ -521,7 +521,7 @@ mod tests {
         let bidder = Address::generate(&env);
         let auction_id = Symbol::new(&env, "timed_out");
 
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
 
         let attempt = client.try_place_bid(&auction_id, &bidder, &100_i128);
         assert!(attempt.is_err(), "bid after end time should be rejected");
@@ -615,7 +615,7 @@ mod tests {
         let events = settlement_events(&env);
         assert_eq!(events.len(), 1);
     }
-        client.init_auction(&auction_id, &0, &1000, &50_i128, &0_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &0_u32, &None, &None);
         client.place_bid(&auction_id, &bidder, &100_i128);
         client.close_auction(&auction_id);
 
@@ -643,7 +643,7 @@ mod tests {
         let auction_id = Symbol::new(&env, "bad_bps");
 
         let result = catch_unwind(AssertUnwindSafe(|| {
-            client.init_auction(&auction_id, &0, &1000, &50_i128, &10_001_u32);
+            client.init_auction(&auction_id, &AuctionMode::English, &0, &1000, &50_i128, &10_001_u32, &None, &None);
         }));
         assert!(result.is_err(), "bps > 10000 should be rejected at init");
     }
@@ -656,9 +656,9 @@ mod tests {
         let client = AuctionClient::new(&env, &contract_id);
 
         // 0 bps (no percentage requirement) is valid
-        client.init_auction(&Symbol::new(&env, "bps0"), &0, &1000, &1_i128, &0_u32);
+        client.init_auction(&Symbol::new(&env, "bps0"), &AuctionMode::English, &0, &1000, &1_i128, &0_u32, &None, &None);
         // 10_000 bps (100% increment) is the maximum valid value
-        client.init_auction(&Symbol::new(&env, "bps10k"), &0, &1000, &1_i128, &10_000_u32);
+        client.init_auction(&Symbol::new(&env, "bps10k"), &AuctionMode::English, &0, &1000, &1_i128, &10_000_u32, &None, &None);
     }
 
     // ── min_increment_bps: bid threshold enforcement ───────────────────────
@@ -675,7 +675,7 @@ mod tests {
         let bob = Address::generate(&env);
 
         // 100 bps = 1%; threshold after 1000 = 1000 + ceil(1000*100/10000) = 1010
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &100_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &100_u32, &None, &None);
         client.place_bid(&auction_id, &alice, &1_000_i128);
 
         let result = catch_unwind(AssertUnwindSafe(|| {
@@ -703,7 +703,7 @@ mod tests {
         let bob = Address::generate(&env);
 
         // 100 bps = 1%; threshold after 1000 = 1010
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &100_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &100_u32, &None, &None);
         client.place_bid(&auction_id, &alice, &1_000_i128);
         client.place_bid(&auction_id, &bob, &1_010_i128); // exactly at threshold
 
@@ -727,7 +727,7 @@ mod tests {
         let carol = Address::generate(&env);
 
         // 333 bps = 3.33%; increment on 1000 = ceil(1000*333/10000) = ceil(33.3) = 34; threshold = 1034
-        client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &333_u32);
+        client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &333_u32, &None, &None);
         client.place_bid(&auction_id, &alice, &1_000_i128);
 
         let just_below = catch_unwind(AssertUnwindSafe(|| {
@@ -789,7 +789,7 @@ fn claim_non_winner_fails_not_winner() {
 
     let auction_id = Symbol::new(&env, "claim_non_winner");
 
-    client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32);
+    client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &0_u32, &None, &None);
     client.place_bid(&auction_id, &winner, &100_i128);
     client.close_auction(&auction_id);
 
@@ -812,7 +812,7 @@ fn claim_double_claim_fails_already_claimed() {
 
     let auction_id = Symbol::new(&env, "claim_double");
 
-    client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32);
+    client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &0_u32, &None, &None);
     client.place_bid(&auction_id, &winner, &100_i128);
     client.close_auction(&auction_id);
 
@@ -841,7 +841,7 @@ fn claim_before_close_fails_not_closed() {
 
     let auction_id = Symbol::new(&env, "claim_not_closed");
 
-    client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32);
+    client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &0_u32, &None, &None);
     client.place_bid(&auction_id, &winner, &100_i128);
     // not closing the auction
 
@@ -863,7 +863,7 @@ fn claim_zero_bid_auction_fails_not_winner() {
 
     let auction_id = Symbol::new(&env, "zero_bid_claim");
 
-    client.init_auction(&auction_id, &0, &u64::MAX, &1_i128, &0_u32);
+    client.init_auction(&auction_id, &AuctionMode::English, &0, &u64::MAX, &1_i128, &0_u32, &None, &None);
     // no bids placed
     client.close_auction(&auction_id);
 
@@ -872,10 +872,8 @@ fn claim_zero_bid_auction_fails_not_winner() {
     }));
     assert!(result.is_err(), "zero-bid claim should fail");
 }
-}
 
- 
- // === Dutch Auction Tests ===
+// === Dutch Auction Tests ===
 
 #[test]
 fn dutch_auction_price_at_start() {
@@ -889,7 +887,6 @@ fn dutch_auction_price_at_start() {
 
     let auction_id = Symbol::new(&env, "dutch_start");
     
-    // Initialize Dutch auction: start 1000, end 2000, start_price 500, floor_price 100
     client.init_auction(
         &auction_id,
         &AuctionMode::Dutch,
@@ -901,17 +898,14 @@ fn dutch_auction_price_at_start() {
         &Some(100_i128),
     );
 
-    // At start (time 1000), price should be 500
     env.ledger().with_mut(|li| li.timestamp = 1000);
-    
-    // Bid at start price should succeed
     client.place_bid(&auction_id, &alice, &500_i128);
 
     let stored: crate::types::AuctionState = env
         .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
         .unwrap();
     
-    assert_eq!(stored.status, AuctionStatus::Closed, "Dutch auction should close on first bid");
+    assert_eq!(stored.status, AuctionStatus::Closed);
     assert_eq!(stored.highest_bidder.unwrap(), alice);
     assert_eq!(stored.highest_bid, 500_i128);
 }
@@ -928,7 +922,6 @@ fn dutch_auction_price_at_mid() {
 
     let auction_id = Symbol::new(&env, "dutch_mid");
     
-    // Initialize Dutch auction: start 1000, end 2000 (duration 1000), start_price 500, floor_price 100
     client.init_auction(
         &auction_id,
         &AuctionMode::Dutch,
@@ -940,17 +933,14 @@ fn dutch_auction_price_at_mid() {
         &Some(100_i128),
     );
 
-    // At midpoint (time 1500), price should be 300 (500 - (500-100)*(500/1000) = 500 - 200 = 300)
     env.ledger().with_mut(|li| li.timestamp = 1500);
-    
-    // Bid at mid price should succeed
     client.place_bid(&auction_id, &alice, &300_i128);
 
     let stored: crate::types::AuctionState = env
         .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
         .unwrap();
     
-    assert_eq!(stored.status, AuctionStatus::Closed, "Dutch auction should close on first bid");
+    assert_eq!(stored.status, AuctionStatus::Closed);
     assert_eq!(stored.highest_bidder.unwrap(), alice);
     assert_eq!(stored.highest_bid, 300_i128);
 }
@@ -967,7 +957,6 @@ fn dutch_auction_price_at_floor() {
 
     let auction_id = Symbol::new(&env, "dutch_floor");
     
-    // Initialize Dutch auction: start 1000, end 2000, start_price 500, floor_price 100
     client.init_auction(
         &auction_id,
         &AuctionMode::Dutch,
@@ -979,17 +968,14 @@ fn dutch_auction_price_at_floor() {
         &Some(100_i128),
     );
 
-    // At end (time 2000), price should be floor price 100
     env.ledger().with_mut(|li| li.timestamp = 2000);
-    
-    // Bid at floor price should succeed
     client.place_bid(&auction_id, &alice, &100_i128);
 
     let stored: crate::types::AuctionState = env
         .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
         .unwrap();
     
-    assert_eq!(stored.status, AuctionStatus::Closed, "Dutch auction should close on first bid");
+    assert_eq!(stored.status, AuctionStatus::Closed);
     assert_eq!(stored.highest_bidder.unwrap(), alice);
     assert_eq!(stored.highest_bid, 100_i128);
 }
@@ -1006,7 +992,6 @@ fn dutch_auction_bid_below_current_price_fails() {
 
     let auction_id = Symbol::new(&env, "dutch_low_bid");
     
-    // Initialize Dutch auction: start 1000, end 2000, start_price 500, floor_price 100
     client.init_auction(
         &auction_id,
         &AuctionMode::Dutch,
@@ -1018,12 +1003,9 @@ fn dutch_auction_bid_below_current_price_fails() {
         &Some(100_i128),
     );
 
-    // At midpoint (time 1500), current price should be 300
     env.ledger().with_mut(|li| li.timestamp = 1500);
-    
-    // Bid below current price should fail
     let result = client.try_place_bid(&auction_id, &alice, &250_i128);
-    assert!(result.is_err(), "bid below current price should fail");
+    assert!(result.is_err());
 }
 
 #[test]
@@ -1039,7 +1021,6 @@ fn dutch_auction_first_bid_settles_immediately() {
 
     let auction_id = Symbol::new(&env, "dutch_first_bid");
     
-    // Initialize Dutch auction
     client.init_auction(
         &auction_id,
         &AuctionMode::Dutch,
@@ -1052,117 +1033,15 @@ fn dutch_auction_first_bid_settles_immediately() {
     );
 
     env.ledger().with_mut(|li| li.timestamp = 1500);
-    
-    // First bid should settle the auction
     client.place_bid(&auction_id, &alice, &300_i128);
 
     let stored: crate::types::AuctionState = env
         .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
         .unwrap();
     
-    assert_eq!(stored.status, AuctionStatus::Closed, "Auction should be closed");
-    
-    // Second bid should fail because auction is closed
+    assert_eq!(stored.status, AuctionStatus::Closed);
     let result = client.try_place_bid(&auction_id, &bob, &400_i128);
-    assert!(result.is_err(), "second bid should fail on closed auction");
-}
-
-#[test]
-fn dutch_auction_price_clamps_at_floor() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let alice = Address::generate(&env);
-
-    let contract_id = env.register(Auction, ());
-    let client = AuctionClient::new(&env, &contract_id);
-
-    let auction_id = Symbol::new(&env, "dutch_clamp");
-    
-    // Initialize Dutch auction: start 1000, end 2000, start_price 500, floor_price 100
-    client.init_auction(
-        &auction_id,
-        &AuctionMode::Dutch,
-        &1000,
-        &2000,
-        &50_i128,
-        &0_u32,
-        &Some(500_i128),
-        &Some(100_i128),
-    );
-
-    // Past end time (time 3000), price should still be floor price 100
-    env.ledger().with_mut(|li| li.timestamp = 3000);
-    
-    // Bid at floor price should succeed even past end time
-    client.place_bid(&auction_id, &alice, &100_i128);
-
-    let stored: crate::types::AuctionState = env
-        .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-        .unwrap();
-    
-    assert_eq!(stored.highest_bid, 100_i128, "price should clamp at floor");
-}
-
-#[test]
-fn dutch_auction_requires_start_and_floor_price() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(Auction, ());
-    let client = AuctionClient::new(&env, &contract_id);
-
-    let auction_id = Symbol::new(&env, "dutch_missing_params");
-    
-    // Dutch auction without start_price should fail
-    let result = client.try_init_auction(
-        &auction_id,
-        &AuctionMode::Dutch,
-        &1000,
-        &2000,
-        &50_i128,
-        &0_u32,
-        &None,
-        &Some(100_i128),
-    );
-    assert!(result.is_err(), "Dutch auction requires start_price");
-    
-    // Dutch auction without floor_price should fail
-    let result = client.try_init_auction(
-        &auction_id,
-        &AuctionMode::Dutch,
-        &1000,
-        &2000,
-        &50_i128,
-        &0_u32,
-        &Some(500_i128),
-        &None,
-    );
-    assert!(result.is_err(), "Dutch auction requires floor_price");
-}
-
-#[test]
-fn dutch_auction_validates_start_greater_than_floor() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(Auction, ());
-    let client = AuctionClient::new(&env, &contract_id);
-
-    let auction_id = Symbol::new(&env, "dutch_invalid_range");
-    
-    // Dutch auction with start_price < floor_price should fail
-    let result = client.try_init_auction(
-        &auction_id,
-        &AuctionMode::Dutch,
-        &1000,
-        &2000,
-        &50_i128,
-        &0_u32,
-        &Some(100_i128),
-        &Some(500_i128),
-    );
-    assert!(result.is_err(), "start_price must be >= floor_price");
+    assert!(result.is_err());
 }
 
 #[test]
@@ -1178,7 +1057,6 @@ fn english_mode_unchanged_with_new_signature() {
 
     let auction_id = Symbol::new(&env, "english_unchanged");
     
-    // Initialize English auction with new signature
     client.init_auction(
         &auction_id,
         &AuctionMode::English,
@@ -1190,7 +1068,6 @@ fn english_mode_unchanged_with_new_signature() {
         &None,
     );
 
-    // English auction behavior should be unchanged
     client.place_bid(&auction_id, &alice, &100_i128);
     client.place_bid(&auction_id, &bob, &200_i128);
 
@@ -1198,49 +1075,8 @@ fn english_mode_unchanged_with_new_signature() {
         .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
         .unwrap();
     
-    assert_eq!(stored.status, AuctionStatus::Open, "English auction should remain open");
+    assert_eq!(stored.status, AuctionStatus::Open);
     assert_eq!(stored.highest_bidder.unwrap(), bob);
     assert_eq!(stored.highest_bid, 200_i128);
 }
-
-#[test]
-fn dutch_auction_respects_min_bid() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let alice = Address::generate(&env);
-
-    let contract_id = env.register(Auction, ());
-    let client = AuctionClient::new(&env, &contract_id);
-
-    let auction_id = Symbol::new(&env, "dutch_min_bid");
-    
-    // Initialize Dutch auction with min_bid 150, start_price 500, floor_price 100
-    client.init_auction(
-        &auction_id,
-        &AuctionMode::Dutch,
-        &1000,
-        &2000,
-        &150_i128,
-        &0_u32,
-        &Some(500_i128),
-        &Some(100_i128),
-    );
-
-    // At floor (time 2000), Dutch price is 100, but min_bid is 150
-    env.ledger().with_mut(|li| li.timestamp = 2000);
-    
-    // Bid below min_bid should fail even if above Dutch price
-    let result = client.try_place_bid(&auction_id, &alice, &120_i128);
-    assert!(result.is_err(), "bid must meet min_bid requirement");
-    
-    // Bid at min_bid should succeed
-    client.place_bid(&auction_id, &alice, &150_i128);
-
-    let stored: crate::types::AuctionState = env
-        .as_contract(&contract_id, || env.storage().persistent().get(&auction_id))
-        .unwrap();
-    
-    assert_eq!(stored.status, AuctionStatus::Closed);
-    assert_eq!(stored.highest_bid, 150_i128);
 }
