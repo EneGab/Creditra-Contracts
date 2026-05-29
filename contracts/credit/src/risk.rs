@@ -182,6 +182,9 @@ pub fn update_risk_parameters(
         env.panic_with_error(ContractError::ScoreTooHigh);
     }
 
+    // Validate credit limit is within configured bounds
+    crate::lifecycle::validate_credit_limit_bounds(&env, credit_limit);
+
     let effective_rate = if let Some(formula_cfg) = get_rate_formula_config(env.clone()) {
         compute_rate_from_score(&formula_cfg, risk_score)
     } else {
