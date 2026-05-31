@@ -5369,9 +5369,5 @@ mod test_max_repay_amount {
         let (client, _admin, _borrower, _token) = setup_with_token(&env);
 
         client.set_max_repay_amount(&0_i128);
-        }
     }
-
-    }
-}
 }
