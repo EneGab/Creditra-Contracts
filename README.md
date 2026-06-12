@@ -48,6 +48,16 @@ This repo contains the **credit** contract: it maintains credit lines, tracks ut
 - When disabled (default or after `clear_rate_formula_config`), the manually supplied rate is used as before.
 - Full formula documentation: [`docs/risk-based-rate-formula.md`](docs/risk-based-rate-formula.md).
 
+## Workspace members
+
+| Crate | Path | Purpose |
+| ----- | ---- | ------- |
+| `creditra-credit` | `contracts/credit/` | Primary credit-line contract: open/draw/repay/risk. |
+| `gateway-auction` | `gateway-contract/contracts/auction_contract/` | Minimal auction contract consumed as a dev-dependency to exercise the credit contract's default-liquidation hook. |
+
+Both crates target `wasm32-unknown-unknown` and share the workspace
+release profile defined in the root `Cargo.toml`.
+
 ## Tech Stack
 
 - **Rust** (edition 2021)
