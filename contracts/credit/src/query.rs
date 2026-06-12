@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: MIT
 
 //! Read-only query helpers for the Credit contract.
+//!
+//! Every function in this module is side-effect free (modulo TTL bumps in
+//! [`crate::storage::get_credit_line`], which write only when the remaining
+//! TTL is below `LEDGER_BUMP_THRESHOLD`).
+//!
+//! These helpers are the primary surface for off-chain indexers: returned
+//! structs are designed for stable serialization order (see
+//! [`crate::types::CreditLineData`] field ordering note).
 
 use crate::storage::grace_period_key;
 use crate::types::{CreditLineData, CreditStatus, GracePeriodConfig, RepaymentSchedule};
