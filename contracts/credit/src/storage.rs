@@ -89,6 +89,14 @@ pub const MAX_ENUMERATION_LIMIT: u32 = 100;
 // below `threshold`, so we can safely call these helpers frequently.
 //
 // Numbers below assume ~5 seconds/ledger close.
+//
+// Derivation:
+//   30 days  = 2_592_000 s   = 518_400 ledgers
+//   3 months = 7_776_000 s   = 1_555_200 ledgers
+//   6 months = 15_552_000 s  = 3_110_400 ledgers
+//
+// We keep a 2:1 ratio between extend-to and refresh-threshold so the average
+// number of TTL writes per active key is at most one per three months.
 pub const LEDGER_BUMP_AMOUNT: u32 = 3_110_400; // ~6 months
 pub const LEDGER_BUMP_THRESHOLD: u32 = 1_555_200; // ~3 months
 
