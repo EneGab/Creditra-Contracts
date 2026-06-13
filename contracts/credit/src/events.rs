@@ -3,6 +3,49 @@
 #![cfg_attr(coverage_nightly, coverage(off))]
 
 //! Event types and publishers for the Credit contract.
+//!
+//! # What
+//!
+//! Every event the credit contract emits is defined here as a
+//! `#[contracttype]` payload struct paired with a `publish_*` helper that
+//! calls `env.events().publish((topic_a, topic_b), payload)`.
+//!
+//! 25+ event topics are published under the `credit` namespace
+//! (`("credit","opened")`, `("credit","drawn")`, `("credit","repay")`,
+//! `("credit","accrue")`, `("credit","defaulted")`,
+//! `("credit","liq_req")`, `("credit","liq_setl")`, etc.) plus the
+//! single-element `("blk_chg",)` topic for borrower blocklist changes.
+//! The full catalog is in
+//! [`docs/indexer-integration.md`](../../../docs/indexer-integration.md).
+//!
+//! # How
+//!
+//! All topic strings are encoded with `symbol_short!` (≤ 9 characters) so
+//! the on-chain encoding is the cheap `SCV_SYMBOL` variant. Payload structs
+//! use plain Soroban host types (`Address`, `i128`, `u32`, `u64`,
+//! `CreditStatus`) so off-chain indexers can decode them with just the
+//! Soroban SDK and the `CreditStatus` discriminant table.
+//!
+//! # Why (ABI stability)
+//!
+//! Event topics and payload field layouts are part of the contract's
+//! public ABI. The CI test `tests/event_topic_stability.rs` pins every
+//! topic string and asserts the payload struct layout has not changed.
+//! Breaking changes to the event surface require a major version bump in
+//! [`crate::CONTRACT_API_VERSION`].
+//!
+//! Additive evolution is safe:
+//!
+//! - New event topics are safe to add (existing topics keep working).
+//! - New fields on an existing payload struct can be added at the end
+//!   *only* via a new event topic with a versioned suffix (e.g.
+//!   `("credit","drawn_v2")`, which already appears here as
+//!   [`DrawnEventV2`] reserved for the next event-schema iteration).
+//!
+//! See [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) for the
+//! end-to-end event topology and
+//! [`docs/PROTOCOL_SPEC.md`](../../../docs/PROTOCOL_SPEC.md) for the
+//! per-entrypoint event-emission table.
 
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol};
 
