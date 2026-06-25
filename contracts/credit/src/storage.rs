@@ -418,11 +418,18 @@ pub fn get_borrower_rate_floor(env: &Env, borrower: &Address) -> Option<u32> {
         .get(&DataKey::RateFloorBps(borrower.clone()))
 }
 
-/// Set a per-borrower max utilization ratio cap in basis points (admin only).
-pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: u32) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::UtilizationCapBps(borrower.clone()), &cap_bps);
+/// Set or clear a per-borrower max utilization ratio cap in basis points (admin only).
+/// Pass `None` to remove the cap.
+pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: Option<u32>) {
+    if let Some(cap) = cap_bps {
+        env.storage()
+            .persistent()
+            .set(&DataKey::UtilizationCapBps(borrower.clone()), &cap);
+    } else {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::UtilizationCapBps(borrower.clone()));
+    }
 }
 
 /// Get the per-borrower max utilization ratio cap, if set.
@@ -437,6 +444,14 @@ pub fn clear_repayment_schedule(env: &Env, borrower: &Address) {
     env.storage()
         .persistent()
         .remove(&DataKey::RepaymentSchedule(borrower.clone()));
+}
+
+/// Block a borrower from drawing (admin only, enforced by caller).
+/// Unblock a borrower (admin only, enforced by caller).
+pub fn set_borrower_unblocked(env: &Env, borrower: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::BlockedBorrower(borrower.clone()));
 }
 
 /// Block a borrower from drawing (admin only, enforced by caller).
@@ -676,4 +691,81 @@ pub fn get_penalty_surcharge_bps(env: &Env) -> u32 {
 /// - **Key**: [`DataKey::PenaltySurchargeBps`]
 pub fn set_penalty_surcharge_bps(env: &Env, bps: u32) {
     env.storage().instance().set(&DataKey::PenaltySurchargeBps, &bps);
+}
+
+// ── Collateral storage ────────────────────────────────────────────────────────
+
+/// Get the collateral balance for a borrower.
+pub fn get_collateral_balance(env: &Env, borrower: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CollateralBalance(borrower.clone()))
+        .unwrap_or(0)
+}
+
+/// Set the collateral balance for a borrower.
+pub fn set_collateral_balance(env: &Env, borrower: &Address, balance: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CollateralBalance(borrower.clone()), &balance);
+}
+
+/// Get the minimum collateral ratio in basis points, if set.
+pub fn get_min_collateral_ratio_bps(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::MinCollateralRatioBps)
+}
+
+/// Set the minimum collateral ratio in basis points.
+pub fn set_min_collateral_ratio_bps(env: &Env, bps: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinCollateralRatioBps, &bps);
+}
+
+// ── Treasury storage ──────────────────────────────────────────────────────────
+
+/// Get the configured treasury address, if set.
+pub fn get_treasury_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::TreasuryAddress)
+}
+
+/// Set the treasury address.
+pub fn set_treasury_address(env: &Env, addr: &Address) {
+    env.storage().instance().set(&DataKey::TreasuryAddress, addr);
+}
+
+/// Get the accumulated treasury balance.
+pub fn get_treasury_balance(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TreasuryBalance)
+        .unwrap_or(0)
+}
+
+/// Add to the treasury balance (used during fee collection).
+pub fn add_treasury_balance(env: &Env, amount: i128) {
+    let current = get_treasury_balance(env);
+    let updated = current
+        .checked_add(amount)
+        .unwrap_or_else(|| env.panic_with_error(crate::types::ContractError::Overflow));
+    env.storage()
+        .instance()
+        .set(&DataKey::TreasuryBalance, &updated);
+}
+
+/// Clear the treasury balance (used during withdrawal).
+pub fn clear_treasury_balance(env: &Env) {
+    env.storage().instance().set(&DataKey::TreasuryBalance, &0_i128);
+}
+
+// ── Protocol fee storage ──────────────────────────────────────────────────────
+
+/// Get the configured protocol fee in basis points, if set.
+pub fn get_protocol_fee_bps(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::ProtocolFeeBps)
+}
+
+/// Set the protocol fee in basis points.
+pub fn set_protocol_fee_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ProtocolFeeBps, &bps);
 }

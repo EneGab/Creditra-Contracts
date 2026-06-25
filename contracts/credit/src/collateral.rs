@@ -47,7 +47,7 @@
 
 use crate::storage::{
     get_collateral_balance, set_collateral_balance, get_min_collateral_ratio_bps,
-    get_credit_line, get_collateral_token,
+    get_credit_line, DataKey,
 };
 use crate::events::{
     publish_collateral_deposited_event, publish_collateral_withdrawn_event,
@@ -66,7 +66,7 @@ pub fn deposit_collateral(env: &Env, borrower: &Address, amount: i128) {
     borrower.require_auth();
 
     // Transfer token from borrower to contract address
-    let token_addr = get_collateral_token(env).unwrap_or_else(|| {
+    let token_addr: Address = env.storage().instance().get(&DataKey::LiquidityToken).unwrap_or_else(|| {
         env.panic_with_error(ContractError::MissingLiquidityToken);
     });
     let token_client = token::Client::new(env, &token_addr);
@@ -129,7 +129,7 @@ pub fn withdraw_collateral(env: &Env, borrower: &Address, amount: i128) {
     }
 
     // Transfer token from contract to borrower
-    let token_addr = get_collateral_token(env).unwrap_or_else(|| {
+    let token_addr: Address = env.storage().instance().get(&DataKey::LiquidityToken).unwrap_or_else(|| {
         env.panic_with_error(ContractError::MissingLiquidityToken);
     });
     let token_client = token::Client::new(env, &token_addr);

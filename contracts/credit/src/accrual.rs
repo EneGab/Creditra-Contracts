@@ -293,3 +293,21 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
 
     line
 }
+
+/// Accrue interest for a batch of borrowers. Idempotent — non-existent or
+/// non-Active lines are skipped without reverting the whole batch.
+pub fn accrue_batch(env: &Env, borrowers: Vec<Address>) {
+    for borrower in borrowers.iter() {
+        let Some(stored) = crate::storage::get_credit_line(env, &borrower) else {
+            continue;
+        };
+        let prev_utilized = stored.utilized_amount;
+        let prev_accrued = stored.accrued_interest;
+        let updated = apply_accrual(env, stored);
+        if updated.utilized_amount != prev_utilized
+            || updated.accrued_interest != prev_accrued
+        {
+            persist_credit_line(env, &borrower, &updated, prev_utilized);
+        }
+    }
+}

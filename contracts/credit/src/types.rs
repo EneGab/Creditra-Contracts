@@ -344,8 +344,7 @@ pub struct RateFormulaConfigEvent {
 
 /// Global protocol configuration.
 ///
-/// This is **not** a `#[contracttype]` — it never crosses the host boundary.
-/// It is a Rust-side projection of the instance-storage keys
+/// This is a Rust-side projection of the instance-storage keys
 /// [`crate::storage::DataKey::LiquidityToken`] and
 /// [`crate::storage::DataKey::LiquiditySource`], used by helpers that want to
 /// inspect both values together (e.g. during the draw pre-flight check).
@@ -354,6 +353,7 @@ pub struct RateFormulaConfigEvent {
 /// that case the relevant entrypoints panic with
 /// [`ContractError::MissingLiquidityToken`] or
 /// [`ContractError::MissingLiquiditySource`].
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolConfig {
     /// Configured liquidity token.

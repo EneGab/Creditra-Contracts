@@ -116,30 +116,32 @@ mod risk_formula_tests;
 use crate::auth::require_admin_auth;
 use crate::events::{
     publish_admin_rotation_accepted, publish_admin_rotation_proposed,
-    publish_borrower_blocked_event, publish_credit_line_event, publish_drawn_event,
-    publish_interest_accrued_event, publish_repayment_event, CreditLineEvent, DrawnEvent,
-    InterestAccruedEvent, RepaymentEvent,
+    publish_borrower_blocked_event, publish_contract_upgraded_event, publish_credit_line_event,
+    publish_drawn_event, publish_draw_reversed_event, publish_interest_accrued_event,
     publish_oracle_config_set_event, publish_oracle_price_accepted_event,
-    publish_contract_upgraded_event, ContractUpgradedEvent,
+    publish_rate_formula_config_event, publish_repayment_event, ContractUpgradedEvent,
+    CreditLineEvent, DrawnEvent, DrawReversedEvent, InterestAccruedEvent, RepaymentEvent,
 };
-use crate::math_utils::{mul_div, Rounding, compute_deviation_bps};
+use crate::math_utils::{compute_deviation_bps, mul_div, Rounding};
 use crate::storage::{
-    admin_key, assert_not_paused, clear_reentrancy_guard, proposed_admin_key, proposed_at_key,
-    rate_cfg_key, set_reentrancy_guard, DataKey, persist_credit_line,
-    get_borrower_by_credit_line_id, MAX_ENUMERATION_LIMIT,
-    set_borrower_blocked as storage_set_borrower_blocked,
-    set_borrower_unblocked,
+    admin_key, assert_not_paused, clear_reentrancy_guard, get_borrower_by_credit_line_id,
+    get_oracle_config as storage_get_oracle_config,
     is_borrower_blocked as storage_is_borrower_blocked,
+    persist_credit_line, proposed_admin_key, proposed_at_key, rate_cfg_key, rate_formula_key,
+    set_oracle_config as storage_set_oracle_config, set_reentrancy_guard, DataKey,
+    MAX_ENUMERATION_LIMIT,
     clear_repayment_schedule,
     get_credit_line as storage_get_credit_line,
     get_last_draw_ts as storage_get_last_draw_ts,
+    set_borrower_blocked as storage_set_borrower_blocked,
+    set_borrower_unblocked,
     set_last_draw_ts as storage_set_last_draw_ts,
     get_utilization_cap_bps as storage_get_utilization_cap_bps,
     set_utilization_cap_bps as storage_set_utilization_cap_bps,
 };
 use crate::types::{
     ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
-    OracleConfig, RateChangeConfig,
+    OracleConfig, ProtocolConfig, RateChangeConfig, RateFormulaConfig,
 };
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -158,6 +160,9 @@ const SCHEMA_VERSION: u32 = 1;
 /// Maximum borrowers that can be blocked in a single `bulk_block_borrowers` call.
 /// Prevents unbounded gas consumption. Adjust after gas profiling.
 const BULK_BLOCK_MAX: u32 = 50;
+
+/// Duration (in seconds) within which a draw can be reversed.
+const DRAW_REVERSAL_WINDOW_SECS: u64 = 86_400; // 24 hours
 
 /// Maximum borrowers that can be processed in a single keeper accrual batch.
 /// Keeps the entrypoint within Soroban resource limits.
@@ -657,7 +662,7 @@ impl Credit {
         max_rate_change_bps: u32,
         rate_change_min_interval: u64,
     ) {
-        risk::set_rate_change_limits(env, max_rate_change_bps, rate_change_min_interval)
+        risk::set_rate_change_limits_legacy(env, max_rate_change_bps, rate_change_min_interval)
     }
 
     /// Set a per-borrower interest rate floor (admin only).
@@ -1017,12 +1022,6 @@ impl Credit {
         lifecycle::default_credit_line(env, borrower)
     }
 
-    pub fn reinstate_credit_line(env: Env, borrower: Address) {
-        lifecycle::reinstate_credit_line(env, borrower)
-    }
-
-// duplicate wrapper removed
-
     pub fn reinstate_credit_line(env: Env, borrower: Address, target_status: CreditStatus) {
         lifecycle::reinstate_credit_line(env, borrower, target_status)
     }
@@ -1149,13 +1148,13 @@ impl Credit {
             env.panic_with_error(ContractError::InvalidAmount);
         }
 
-        set_oracle_config(&env, &OracleConfig { max_deviation_bps, max_age_seconds });
+        storage_set_oracle_config(&env, &OracleConfig { max_deviation_bps, max_age_seconds });
         publish_oracle_config_set_event(&env, max_deviation_bps, max_age_seconds);
     }
 
     /// Return the current oracle circuit-breaker configuration, if set.
     pub fn get_oracle_config(env: Env) -> Option<OracleConfig> {
-        get_oracle_config(&env)
+        storage_get_oracle_config(&env)
     }
 
     // ── Borrower blocklist ────────────────────────────────────────────────────
@@ -1167,7 +1166,7 @@ impl Credit {
     pub fn block_borrower(env: Env, admin: Address, borrower: Address) {
         admin.require_auth();
         require_admin_auth(&env);
-        storage_set_borrower_blocked(&env, &borrower);
+        storage_set_borrower_blocked(&env, &borrower, true);
         publish_borrower_blocked_event(&env, &borrower, true);
     }
 
@@ -1205,7 +1204,7 @@ impl Credit {
             );
         }
         for borrower in borrowers.iter() {
-            storage_set_borrower_blocked(&env, &borrower);
+            storage_set_borrower_blocked(&env, &borrower, true);
             publish_borrower_blocked_event(&env, &borrower, true);
         }
     }
@@ -1420,9 +1419,6 @@ impl Credit {
         // Enforce admin authentication: only the configured admin can upgrade.
         require_admin_auth(&env);
 
-        // Retrieve the current WASM hash before upgrade for event emission.
-        let old_wasm_hash = env.deployer().get_current_contract_wasm();
-
         // Bump schema version to track upgrade history.
         let current_version = crate::storage::get_schema_version(&env).unwrap_or(SCHEMA_VERSION);
         crate::storage::set_schema_version(&env, current_version.saturating_add(1));
@@ -1431,10 +1427,11 @@ impl Credit {
         env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
 
         // Emit upgrade event for off-chain indexers and audit trails.
+        // old_wasm_hash is unavailable in SDK 22, emit zeros.
         publish_contract_upgraded_event(
             &env,
             ContractUpgradedEvent {
-                old_wasm_hash,
+                old_wasm_hash: BytesN::from_array(&env, &[0u8; 32]),
                 new_wasm_hash,
             },
         );
@@ -2254,7 +2251,7 @@ mod test_smoke_coverage {
 }
 
 #[cfg(test)]
-mod test_smoke_coverage {
+mod test_smoke_coverage_extra {
     use super::*;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::token::{Client as TokenClient, StellarAssetClient};
