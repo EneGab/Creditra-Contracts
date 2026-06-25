@@ -34,7 +34,7 @@ fn test_g_address_to_string_from_str_round_trip() {
     let borrower = Address::generate(&env);
 
     let strkey = borrower.to_string();
-    let restored = Address::from_str(&env, strkey.as_ref());
+    let restored = Address::from_str(&env, &strkey.to_string());
 
     assert_eq!(restored, borrower);
 }
@@ -83,7 +83,7 @@ fn test_c_address_to_string_from_str_round_trip() {
     let contract_id = env.register(Credit, ());
 
     let strkey = contract_id.to_string();
-    let restored = Address::from_str(&env, strkey.as_ref());
+    let restored = Address::from_str(&env, &strkey.to_string());
 
     assert_eq!(restored, contract_id);
 }
@@ -111,7 +111,7 @@ fn test_g_address_strkey_prefix() {
     let env = Env::default();
     let user = Address::generate(&env);
     let s = user.to_string();
-    let bytes = s.as_ref().as_bytes();
+    let bytes = s.to_string().as_bytes();
     assert!(!bytes.is_empty(), "G-address strkey must not be empty");
     let first = bytes[0] as char;
     assert!(
@@ -126,7 +126,7 @@ fn test_c_address_strkey_prefix() {
     let env = Env::default();
     let contract_id = env.register(Credit, ());
     let s = contract_id.to_string();
-    let bytes = s.as_ref().as_bytes();
+    let bytes = s.to_string().as_bytes();
     assert!(!bytes.is_empty());
     let first = bytes[0] as char;
     assert_eq!(first, 'C', "Contract address strkey must start with 'C'");
@@ -227,7 +227,7 @@ fn test_multiple_addresses_independent_round_trips() {
     // Verify all strkeys are unique (byte-level collision check)
     let strkey_bytes: Vec<Vec<u8>> = original_addresses
         .iter()
-        .map(|(addr, _, _, _)| addr.to_string().as_ref().as_bytes().to_vec())
+        .map(|(addr, _, _, _)| addr.to_string().to_string().as_bytes().to_vec())
         .collect();
     let unique: HashSet<Vec<u8>> = strkey_bytes.iter().cloned().collect();
     assert_eq!(unique.len(), original_addresses.len());
@@ -247,7 +247,7 @@ fn test_to_string_then_from_str_via_env() {
     assert_eq!(via_from_string, borrower);
 
     // Path B: from_str (takes &str via Env)
-    let str_rust = strkey_sdk.as_ref();
+    let str_rust = strkey_sdk.to_string();
     let via_from_str = Address::from_str(&env, str_rust);
     assert_eq!(via_from_str, borrower);
 
@@ -262,7 +262,7 @@ fn test_contract_address_to_string_then_from_str() {
     let contract_id = env.register(Credit, ());
 
     let strkey = contract_id.to_string();
-    let via_from_str = Address::from_str(&env, strkey.as_ref());
+    let via_from_str = Address::from_str(&env, &strkey.to_string());
     assert_eq!(via_from_str, contract_id);
     assert_eq!(via_from_str.to_string(), strkey);
 }

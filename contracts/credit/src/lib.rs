@@ -102,10 +102,10 @@ mod config;
 pub mod events;
 mod freeze;
 mod lifecycle;
-mod math_utils;
+pub mod math_utils;
 mod query;
 mod risk;
-mod storage;
+pub mod storage;
 pub mod types;
 
 #[cfg(test)]
@@ -1035,6 +1035,10 @@ impl Credit {
 
     pub fn reinstate_credit_line(env: Env, borrower: Address, target_status: CreditStatus) {
         lifecycle::reinstate_credit_line(env, borrower, target_status)
+    }
+
+    pub fn forgive_debt(env: Env, borrower: Address, amount: i128) {
+        lifecycle::forgive_debt(env, borrower, amount)
     }
 
     /// Apply auction liquidation proceeds to a defaulted credit line (admin only).
