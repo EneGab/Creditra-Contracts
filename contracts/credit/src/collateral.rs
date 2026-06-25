@@ -45,16 +45,16 @@
 //! [`docs/contract-errors.md`](../../../docs/contract-errors.md) for the
 //! full error table.
 
-use crate::storage::{
-    get_collateral_balance, set_collateral_balance, get_min_collateral_ratio_bps,
-    get_credit_line, get_collateral_token,
-};
 use crate::events::{
     publish_collateral_deposited_event, publish_collateral_withdrawn_event,
     CollateralDepositedEvent, CollateralWithdrawnEvent,
 };
+use crate::storage::{
+    get_collateral_balance, get_collateral_token, get_credit_line, get_min_collateral_ratio_bps,
+    set_collateral_balance,
+};
 use crate::types::ContractError;
-use soroban_sdk::{Address, Env, token};
+use soroban_sdk::{token, Address, Env};
 
 /// Deposit collateral tokens from the borrower into the contract.
 /// Requires borrower authentication.
@@ -71,7 +71,7 @@ pub fn deposit_collateral(env: &Env, borrower: &Address, amount: i128) {
     });
     let token_client = token::Client::new(env, &token_addr);
     let contract_addr = env.current_contract_address();
-    
+
     // In Soroban token standard, transfer takes (from, to, amount).
     // `borrower.require_auth()` ensures this is authorized by the borrower.
     token_client.transfer(borrower, &contract_addr, &amount);
@@ -84,11 +84,14 @@ pub fn deposit_collateral(env: &Env, borrower: &Address, amount: i128) {
     set_collateral_balance(env, borrower, new_balance);
 
     // Publish event
-    publish_collateral_deposited_event(env, CollateralDepositedEvent {
-        borrower: borrower.clone(),
-        amount,
-        new_balance,
-    });
+    publish_collateral_deposited_event(
+        env,
+        CollateralDepositedEvent {
+            borrower: borrower.clone(),
+            amount,
+            new_balance,
+        },
+    );
 }
 
 /// Withdraw collateral tokens to the borrower.
@@ -117,11 +120,12 @@ pub fn withdraw_collateral(env: &Env, borrower: &Address, amount: i128) {
         if credit_line.utilized_amount > 0 {
             // Compute required collateral after withdrawal
             let min_ratio_bps = get_min_collateral_ratio_bps(env).unwrap_or(15000);
-            let required = (credit_line.utilized_amount as i128)
+            let required = credit_line
+                .utilized_amount
                 .checked_mul(min_ratio_bps as i128)
                 .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow))
                 / 10_000;
-            
+
             if post_balance < required {
                 env.panic_with_error(ContractError::CollateralRatioBelowMinimum);
             }
@@ -140,11 +144,14 @@ pub fn withdraw_collateral(env: &Env, borrower: &Address, amount: i128) {
     set_collateral_balance(env, borrower, post_balance);
 
     // Publish event
-    publish_collateral_withdrawn_event(env, CollateralWithdrawnEvent {
-        borrower: borrower.clone(),
-        amount,
-        new_balance: post_balance,
-    });
+    publish_collateral_withdrawn_event(
+        env,
+        CollateralWithdrawnEvent {
+            borrower: borrower.clone(),
+            amount,
+            new_balance: post_balance,
+        },
+    );
 }
 
 /// Read‑only getter for a borrower's collateral balance.

@@ -127,8 +127,14 @@ mod tests {
         let events = env.events().all();
         let last = events.get(events.len() - 1).unwrap();
         let topics = last.1;
-        assert_eq!(topics.get(0).unwrap(), Symbol::new(&env, "credit"));
-        assert_eq!(topics.get(1).unwrap(), Symbol::new(&env, "schema_v"));
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap(),
+            Symbol::new(&env, "credit")
+        );
+        assert_eq!(
+            Symbol::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+            Symbol::new(&env, "schema_v")
+        );
 
         let event = SchemaVersionEvent::try_from_val(&env, &last.2).unwrap();
         assert_eq!(event, SchemaVersionEvent { from: 0, to: 1 });

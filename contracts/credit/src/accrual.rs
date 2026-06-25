@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+#![allow(clippy::doc_overindented_list_items)]
+
 //! Interest accrual logic for credit lines.
 //!
 //! # What
@@ -54,11 +56,15 @@
 
 #![warn(missing_docs)]
 
-use crate::events::{publish_interest_accrued_event, InterestAccruedEvent, publish_penalty_rate_entered_event, publish_penalty_rate_exited_event};
-use crate::storage::persist_credit_line;
-use crate::types::{ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode};
+use crate::events::{
+    publish_interest_accrued_event, publish_penalty_rate_entered_event,
+    publish_penalty_rate_exited_event, InterestAccruedEvent,
+};
 use crate::math_utils::{prorate_interest, Rounding};
-use soroban_sdk::{Address, Env, Vec};
+use crate::types::{
+    ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
+};
+use soroban_sdk::{Address, Env};
 
 /// Compute and apply accrued interest to a credit line for the elapsed period.
 ///
@@ -129,7 +135,6 @@ fn compute_interest(utilized: i128, rate_bps: i128, seconds: i128) -> Result<i12
 /// with explicit `Rounding::Floor`. `last_accrual_ts` is only updated when a
 /// non-zero accrual has been successfully computed and applied. No rounding-up
 /// is performed by default.
-
 pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
     let now = env.ledger().timestamp();
 
@@ -157,7 +162,7 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
     // Check if the borrower is delinquent to apply penalty surcharge
     let is_delinquent = crate::query::is_delinquent(env.clone(), line.borrower.clone());
     let penalty_surcharge_bps = crate::storage::get_penalty_surcharge_bps(env);
-    
+
     // Track previous rate to detect penalty rate entry/exit
     let previous_effective_rate = line.interest_rate_bps;
 
@@ -210,7 +215,7 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
                         GraceWaiverMode::ReducedRate => prorate_interest(
                             line.utilized_amount as u128,
                             cfg.reduced_rate_bps,
-                            (now - accrual_start) as u64,
+                            now - accrual_start,
                             Rounding::Floor,
                         ),
                     }
@@ -219,13 +224,13 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
                     prorate_interest(
                         line.utilized_amount as u128,
                         effective_rate_bps,
-                        (now - accrual_start) as u64,
+                        now - accrual_start,
                         Rounding::Floor,
                     )
                 } else {
                     // Straddles grace boundary — prorate two sub-periods and add.
-                    let in_window_secs = (grace_end - accrual_start) as u64;
-                    let post_window_secs = (now - grace_end) as u64;
+                    let in_window_secs = grace_end - accrual_start;
+                    let post_window_secs = now - grace_end;
 
                     let in_window = match cfg.waiver_mode {
                         GraceWaiverMode::FullWaiver => 0u128,
@@ -250,7 +255,7 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
             _ => prorate_interest(
                 line.utilized_amount as u128,
                 effective_rate_bps,
-                (now - accrual_start) as u64,
+                now - accrual_start,
                 Rounding::Floor,
             ),
         }
@@ -259,7 +264,7 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
         prorate_interest(
             line.utilized_amount as u128,
             effective_rate_bps,
-            (now - accrual_start) as u64,
+            now - accrual_start,
             Rounding::Floor,
         )
     };
@@ -292,4 +297,15 @@ pub fn apply_accrual(env: &Env, mut line: CreditLineData) -> CreditLineData {
     }
 
     line
+}
+
+/// Accrue interest for multiple borrowers in a single call.
+/// Iterates over the borrower list and applies accrual to each credit line found.
+pub fn accrue_batch(env: &Env, borrowers: soroban_sdk::Vec<Address>) {
+    for borrower in borrowers.iter() {
+        if let Some(line) = crate::storage::get_credit_line(env, &borrower) {
+            let updated = apply_accrual(env, line);
+            crate::storage::persist_credit_line(env, &borrower, &updated, updated.utilized_amount);
+        }
+    }
 }

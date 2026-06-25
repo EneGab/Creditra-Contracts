@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), no_std)]
+#![allow(dead_code, clippy::too_many_arguments)]
 
 //! # gateway-auction
 //!
@@ -63,9 +64,7 @@ use errors::AuctionError;
 
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, BytesN, Env, Symbol};
 
-use crate::storage::{
-    clear_reentrancy_guard, get_factory_contract, set_factory_contract, set_reentrancy_guard,
-};
+use crate::storage::{clear_reentrancy_guard, get_factory_contract, set_reentrancy_guard};
 use crate::types::*;
 use events::{
     publish_auction_closed_event, publish_bid_refunded_event,
@@ -258,7 +257,7 @@ impl Auction {
         }
 
         let now = env.ledger().timestamp();
-        
+
         if now >= state.config.end_time {
             panic!("auction closed");
         }
@@ -307,9 +306,7 @@ impl Auction {
             AuctionMode::Dutch => {
                 // Dutch auction: first qualifying bid wins
                 let current_time = env.ledger().timestamp();
-                let elapsed_time = current_time
-                    .checked_sub(state.config.start_time)
-                    .unwrap_or(0);
+                let elapsed_time = current_time.saturating_sub(state.config.start_time);
                 let duration = state
                     .config
                     .end_time
@@ -369,10 +366,9 @@ impl Auction {
         credit_contract: Address,
         borrower: Address,
     ) -> i128 {
-        let factory = get_factory_contract(&env).unwrap_or_else(|| panic!(AuctionError::NoFactoryContract));
-        if env.invoker() != factory {
-            panic!(AuctionError::Unauthorized);
-        }
+        let factory = get_factory_contract(&env)
+            .unwrap_or_else(|| env.panic_with_error(AuctionError::NoFactoryContract));
+        factory.require_auth();
 
         let state: AuctionState = env
             .storage()
