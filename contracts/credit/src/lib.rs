@@ -119,18 +119,18 @@ use crate::auth::require_admin_auth;
 use crate::events::{
     publish_admin_rotation_accepted, publish_admin_rotation_proposed,
     publish_borrower_blocked_event, publish_credit_line_event, publish_drawn_event,
-    publish_interest_accrued_event, publish_repayment_event, CreditLineEvent, DrawnEvent,
-    InterestAccruedEvent, RepaymentEvent,
+    publish_draw_reversed_event, publish_interest_accrued_event,
+    publish_rate_formula_config_event, publish_repayment_event, ContractUpgradedEvent,
+    CreditLineEvent, DrawnEvent, DrawReversedEvent, InterestAccruedEvent, RepaymentEvent,
     publish_oracle_config_set_event, publish_oracle_price_accepted_event,
-    publish_contract_upgraded_event, ContractUpgradedEvent,
+    publish_contract_upgraded_event,
 };
 use crate::math_utils::{mul_div, Rounding, compute_deviation_bps};
 use crate::storage::{
     admin_key, assert_not_paused, clear_reentrancy_guard, proposed_admin_key, proposed_at_key,
-    rate_cfg_key, set_reentrancy_guard, DataKey, persist_credit_line,
+    rate_cfg_key, rate_formula_key, set_reentrancy_guard, DataKey, persist_credit_line,
     get_borrower_by_credit_line_id, MAX_ENUMERATION_LIMIT,
     set_borrower_blocked as storage_set_borrower_blocked,
-    set_borrower_unblocked,
     is_borrower_blocked as storage_is_borrower_blocked,
     clear_repayment_schedule,
     get_credit_line as storage_get_credit_line,
@@ -138,10 +138,11 @@ use crate::storage::{
     set_last_draw_ts as storage_set_last_draw_ts,
     get_utilization_cap_bps as storage_get_utilization_cap_bps,
     set_utilization_cap_bps as storage_set_utilization_cap_bps,
+    get_oracle_config, set_oracle_config,
 };
 use crate::types::{
     ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
-    OracleConfig, RateChangeConfig,
+    OracleConfig, ProtocolConfig, RateChangeConfig, RateFormulaConfig,
 };
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -164,6 +165,12 @@ const BULK_BLOCK_MAX: u32 = 50;
 /// Maximum borrowers that can be processed in a single keeper accrual batch.
 /// Keeps the entrypoint within Soroban resource limits.
 const ACCRUE_BATCH_MAX: u32 = 50;
+
+/// Authorized time window (seconds) during which an admin can reverse a drawn
+/// amount via `reverse_draw`. Outside this window, `reverse_draw` rejects so
+/// borrowers and counterparties can rely on a draw being permanent after
+/// `DRAW_REVERSAL_WINDOW_SECS` has elapsed since `original_ts`.
+const DRAW_REVERSAL_WINDOW_SECS: u64 = 86_400; // 24 hours
 
 #[soroban_sdk::contractclient(name = "AuctionClient")]
 pub trait Auction {
@@ -1030,12 +1037,8 @@ impl Credit {
         lifecycle::default_credit_line(env, borrower)
     }
 
-    pub fn reinstate_credit_line(env: Env, borrower: Address) {
-        lifecycle::reinstate_credit_line(env, borrower)
-    }
-
-// duplicate wrapper removed
-
+    /// Reinstate a defaulted credit line to either `Active` or `Restricted`
+    /// (admin only).
     pub fn reinstate_credit_line(env: Env, borrower: Address, target_status: CreditStatus) {
         lifecycle::reinstate_credit_line(env, borrower, target_status)
     }
@@ -1180,7 +1183,7 @@ impl Credit {
     pub fn block_borrower(env: Env, admin: Address, borrower: Address) {
         admin.require_auth();
         require_admin_auth(&env);
-        storage_set_borrower_blocked(&env, &borrower);
+        storage_set_borrower_blocked(&env, &borrower, true);
         publish_borrower_blocked_event(&env, &borrower, true);
     }
 
@@ -1191,7 +1194,7 @@ impl Credit {
     pub fn unblock_borrower(env: Env, admin: Address, borrower: Address) {
         admin.require_auth();
         require_admin_auth(&env);
-        set_borrower_unblocked(&env, &borrower);
+        storage_set_borrower_blocked(&env, &borrower, false);
         publish_borrower_blocked_event(&env, &borrower, false);
     }
 
@@ -1218,7 +1221,7 @@ impl Credit {
             );
         }
         for borrower in borrowers.iter() {
-            storage_set_borrower_blocked(&env, &borrower);
+            storage_set_borrower_blocked(&env, &borrower, true);
             publish_borrower_blocked_event(&env, &borrower, true);
         }
     }
@@ -1433,7 +1436,12 @@ impl Credit {
         require_admin_auth(&env);
 
         // Retrieve the current WASM hash before upgrade for event emission.
-        let old_wasm_hash = env.deployer().get_current_contract_wasm();
+        // Soroban SDK's `Deployer` API does not expose the pre-upgrade WASM hash
+        // (only `update_current_contract_wasm` is available), so emit a zero-filled
+        // `BytesN` placeholder. This keeps `ContractUpgradedEvent`'s ABI shape
+        // stable for off-chain indexers, which can correlate upgrades against
+        // their own deployment records.
+        let old_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
 
         // Perform the atomic WASM upgrade.
         env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
