@@ -100,6 +100,13 @@ Violations revert:
 `last_rate_update_ts` is only advanced when a rate actually changes, so a
 no-op `update_risk_parameters` does not reset the cadence clock.
 
+**Same-block double-update gotcha.** Soroban ledger timestamps have
+second-level resolution. Two `update_risk_parameters` calls that change the
+rate in the same ledger second satisfy `t_now == t_last_rate_update`, so
+`elapsed = 0 < τ_min` and the second call reverts with
+`TimestampRegression = 33`. Integration coverage lives in
+`contracts/credit/tests/rate_change_same_block.rs`.
+
 ### 2.4 Worked numerical example — rate
 
 Configure:

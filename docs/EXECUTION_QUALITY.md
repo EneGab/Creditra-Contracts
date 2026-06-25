@@ -47,6 +47,7 @@ Companion: `COVERAGE_REPORT.md` (per-issue coverage snapshots),
 | `grace_waiver.rs` | Grace-period waiver modes (FullWaiver / ReducedRate) |
 | `init_idempotency.rs` | `init` single-shot; `AlreadyInitialized` |
 | `monotonic_timestamps.rs` | `last_accrual_ts`, `last_rate_update_ts` monotonicity |
+| `rate_change_same_block.rs` | `RateChangeConfig` cadence rejects same-block double rate update |
 | `open_credit_line.rs` | `open_credit_line` happy path / validation |
 | `oracle_deviation.rs` | Oracle staleness / deviation circuit breaker |
 | `penalty_surcharge.rs` | Penalty surcharge on delinquent lines |
