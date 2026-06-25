@@ -21,3 +21,6 @@ jobs:
 
       - name: Run tests
         run: cargo test -p creditra-credit
+
+      - name: Run benchmarks
+        run: cargo bench -p creditra-credit --bench hot_mutators

@@ -1,7 +1,7 @@
 # Contributing Tests
 
 This guide covers test-only helpers used in `contracts/credit/src/lib.rs` for
-draw/repay integration scenarios.
+draw/repay integration scenarios and the benchmark suite.
 
 ## Liquidity Test Helpers
 
@@ -56,3 +56,22 @@ cargo test -p creditra-credit --test token_failure_rollback rollback
 
 `MockLiquidityToken` is test-only (`#[cfg(test)]`) and must not be imported
 into contract runtime logic.
+
+## Benchmark Suite
+
+We have a criterion benchmark suite for hot mutators in `contracts/credit/benches/hot_mutators.rs`.
+
+### Running the Benchmarks
+
+```bash
+cargo bench -p creditra-credit --bench hot_mutators
+```
+
+### Covered Mutators
+- `draw_credit`
+- `repay_credit`
+- `apply_accrual` (called internally by other methods)
+- `settle_default_liquidation`
+
+### Benchmark Details
+The benchmarks use the Soroban test environment with a mock Stellar asset token. Each benchmark sets up a fresh environment per iteration to ensure isolation.
