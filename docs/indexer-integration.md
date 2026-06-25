@@ -246,3 +246,69 @@ Before ingesting events from a deployed credit contract, indexers should call th
 - Store raw XDR alongside normalized records for audit/replay.
 - Make ingestion idempotent and checkpointed.
 - Support versioned topic suffixes (`*_v2`, etc.) for future migrations.
+
+---
+
+## 8) Draw audit queries (contract read)
+
+Indexers can also obtain per-draw records directly via contract queries instead of parsing events. This is useful for backfill, reconciliation, or building historical draw timelines without event storage.
+
+### `get_draw_audit`
+
+Returns the draw amount for a specific borrower at a specific ledger timestamp, or `None` if no draw occurred at that timestamp.
+
+**Signature:**
+```rust,ignore
+fn get_draw_audit(env: Env, borrower: Address, timestamp: u64) -> Option<i128>
+```
+
+**Arguments:**
+| Name | Type | Description |
+|------|------|-------------|
+| `borrower` | `Address` | Borrower address |
+| `timestamp` | `u64` | Ledger timestamp of the draw |
+
+**Example:** `get_draw_audit(borrower, 1717171200)` returns `Some(5_000_0000000)` if drawn at that timestamp.
+
+### `enumerate_draw_audit`
+
+Returns a reverse-chronological list of `(timestamp, amount)` pairs for a borrower, with optional cursor-based pagination.
+
+**Signature:**
+```rust,ignore
+fn enumerate_draw_audit(
+    env: Env,
+    borrower: Address,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Vec<(u64, i128)>
+```
+
+**Arguments:**
+| Name | Type | Description |
+|------|------|-------------|
+| `borrower` | `Address` | Borrower address |
+| `cursor` | `Option<u64>` | Exclusive upper bound timestamp (start before this). Pass `None` for most recent first. |
+| `limit` | `u32` | Maximum results (capped at 100 internally). |
+
+**Pagination pattern:**
+
+1. Call with `cursor = None, limit = 100` to get the first page (newest draws).
+2. If the result is full, use the last entry's timestamp as `cursor` for the next call.
+3. Cursor is exclusive, so set `cursor = last_timestamp` (not `last_timestamp - 1`).
+
+**Example (first page):**
+```
+enumerate_draw_audit(borrower, None, 10)
+-> [(1717248000, 3000000000), (1717171200, 2000000000)]
+```
+
+**Example (second page, paginating past ts=1717171200):**
+```
+enumerate_draw_audit(borrower, Some(1717171200), 10)
+-> [(1717084800, 1000000000)]
+```
+
+### Storage key
+
+Draw audit entries are stored under `DataKey::DrawAudit(Address, u64)` keyed by borrower and timestamp, storing an `i128` draw amount. No authentication is required for any read query.

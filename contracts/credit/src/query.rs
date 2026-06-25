@@ -10,11 +10,11 @@
 //! structs are designed for stable serialization order (see
 //! [`crate::types::CreditLineData`] field ordering note).
 
-use crate::storage::grace_period_key;
+use crate::storage::{grace_period_key, MAX_ENUMERATION_LIMIT};
 use crate::types::{
     CreditLineData, CreditStatus, GracePeriodConfig, ProtocolSummary, RepaymentSchedule,
 };
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, Vec};
 
 /// Return the credit line for `borrower`, or `None` if no line exists.
 ///
@@ -82,9 +82,99 @@ pub fn is_delinquent(env: Env, borrower: Address) -> bool {
         return false;
     };
 
-    let grace_cfg: Option<GracePeriodConfig> = env.storage().instance().get(&grace_period_key(&env));
+    let grace_cfg: Option<GracePeriodConfig> =
+        env.storage().instance().get(&grace_period_key(&env));
     let grace_seconds = grace_cfg.map(|cfg| cfg.grace_period_seconds).unwrap_or(0);
     let delinquent_after = schedule.next_due_ts.saturating_add(grace_seconds);
 
     env.ledger().timestamp() > delinquent_after
+}
+
+/// Return the draw amount recorded for `borrower` at `timestamp`, or `None`
+/// if no draw occurred at that timestamp.
+///
+/// # Authentication
+/// No authentication required. Read-only — does not mutate storage.
+pub fn get_draw_audit(env: Env, borrower: Address, timestamp: u64) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&crate::storage::DataKey::DrawAudit(borrower, timestamp))
+}
+
+/// Enumerate draw audit entries for `borrower` in reverse chronological order
+/// (most recent first).
+///
+/// `cursor` is an exclusive upper bound: only entries with timestamp strictly
+/// less than `cursor` are returned. Pass `None` to start from the most recent
+/// draw. Results are capped by `MAX_ENUMERATION_LIMIT`.
+///
+/// # CPU complexity
+///
+/// O(log N + limit) — a binary search locates the first qualifying entry in the
+/// timestamp index, then walks backward collecting at most `limit` results.
+///
+/// # Authentication
+/// No authentication required. Read-only — does not mutate storage.
+pub fn enumerate_draw_audit(
+    env: Env,
+    borrower: Address,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Vec<(u64, i128)> {
+    let capped = limit.min(MAX_ENUMERATION_LIMIT);
+    let mut out: Vec<(u64, i128)> = Vec::new(&env);
+    if capped == 0 {
+        return out;
+    }
+
+    let timestamps = crate::storage::get_draw_audit_timestamps(&env, &borrower);
+    let len = timestamps.len();
+    if len == 0 {
+        return out;
+    }
+
+    // Binary search: find the rightmost index with timestamp < cursor.
+    // When cursor is None, start from the newest entry (last index).
+    let start_idx: i64 = match cursor {
+        Some(cursor_ts) => {
+            let mut lo: i64 = 0;
+            let mut hi: i64 = len as i64 - 1;
+            let mut result: i64 = -1;
+            while lo <= hi {
+                let mid = lo + (hi - lo) / 2;
+                let ts = timestamps.get(mid as u32).unwrap();
+                if ts < cursor_ts {
+                    result = mid;
+                    lo = mid + 1;
+                } else {
+                    hi = mid - 1;
+                }
+            }
+            if result < 0 {
+                return out;
+            }
+            result
+        }
+        None => len as i64 - 1,
+    };
+
+    // Walk backward from start_idx, collecting at most `capped` entries.
+    let mut idx = start_idx;
+    let mut collected = 0u32;
+    while idx >= 0 {
+        let ts = timestamps.get(idx as u32).unwrap();
+        let amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&crate::storage::DataKey::DrawAudit(borrower.clone(), ts))
+            .unwrap_or(0);
+        out.push_back((ts, amount));
+        collected += 1;
+        if collected >= capped {
+            break;
+        }
+        idx -= 1;
+    }
+
+    out
 }
