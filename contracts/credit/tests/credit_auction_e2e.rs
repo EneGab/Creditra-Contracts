@@ -10,7 +10,7 @@
 
 use creditra_credit::types::CreditStatus;
 use creditra_credit::{Credit, CreditClient};
-use gateway_auction::{Auction, AuctionClient};
+use gateway_auction::{Auction, AuctionClient, AuctionMode};
 use simple_price_oracle::{SimplePriceOracle, SimplePriceOracleClient};
 use soroban_sdk::testutils::{Address as _, Events as _, Ledger};
 use soroban_sdk::token::StellarAssetClient;
@@ -96,7 +96,16 @@ fn run_auction_to_settlement(
     let start_time = env.ledger().timestamp();
     let end_time = start_time + AUCTION_DURATION;
 
-    auction.init_auction(settlement_id, &start_time, &end_time, &MIN_BID);
+    auction.init_auction(
+        settlement_id,
+        &AuctionMode::English,
+        &start_time,
+        &end_time,
+        &MIN_BID,
+        &0_u32,
+        &None,
+        &None,
+    );
     auction.place_bid(settlement_id, &bidder, &first_bid);
     auction.place_bid(settlement_id, &winner, &recovered_amount);
 
@@ -123,7 +132,12 @@ fn settle_credit_from_auction(
     recovered_amount: i128,
 ) {
     let credit = CreditClient::new(env, &deployment.credit_id);
-    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, settlement_id, &None);
+    credit.settle_default_liquidation(
+        &deployment.borrower,
+        &recovered_amount,
+        settlement_id,
+        &None,
+    );
     assert_event_topic(env, &deployment.credit_id, "credit", "liq_setl");
 }
 
@@ -241,8 +255,21 @@ fn e2e_atomic_settlement_with_configured_auction() {
     let start_time = env.ledger().timestamp();
     let end_time = start_time + AUCTION_DURATION;
 
-    auction.init_auction(&settlement_id, &start_time, &end_time, &MIN_BID);
-    auction.place_bid(&settlement_id, &Address::generate(&env), &(recovered_amount / 2));
+    auction.init_auction(
+        &settlement_id,
+        &AuctionMode::English,
+        &start_time,
+        &end_time,
+        &MIN_BID,
+        &0_u32,
+        &None,
+        &None,
+    );
+    auction.place_bid(
+        &settlement_id,
+        &Address::generate(&env),
+        &(recovered_amount / 2),
+    );
     let winner = Address::generate(&env);
     auction.place_bid(&settlement_id, &winner, &recovered_amount);
 
@@ -255,7 +282,12 @@ fn e2e_atomic_settlement_with_configured_auction() {
     // Call settle_default_liquidation on the credit contract!
     // It should atomically call settle_default_liquidation on the auction contract,
     // reconcile the bid amount, and close the defaulted line!
-    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, &settlement_id, &None);
+    credit.settle_default_liquidation(
+        &deployment.borrower,
+        &recovered_amount,
+        &settlement_id,
+        &None,
+    );
 
     let line = credit.get_credit_line(&deployment.borrower).unwrap();
     assert_eq!(line.utilized_amount, 0);

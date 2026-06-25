@@ -10,11 +10,11 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Env};
 
 /// Deploy a [`SimplePriceOracle`] and seed `price` via the admin account.
-pub(crate) fn deploy_mock_oracle(
-    env: &Env,
+pub(crate) fn deploy_mock_oracle<'a>(
+    env: &'a Env,
     admin: &Address,
     price: i128,
-) -> SimplePriceOracleClient<'_> {
+) -> SimplePriceOracleClient<'a> {
     let oracle_id = env.register(SimplePriceOracle, ());
     let client = SimplePriceOracleClient::new(env, &oracle_id);
     client.init(admin);
@@ -25,7 +25,7 @@ pub(crate) fn deploy_mock_oracle(
 }
 
 /// Deploy credit with admin initialized; returns `(client, contract_id, admin)`.
-pub(crate) fn setup_credit(env: &Env) -> (CreditClient<'_>, Address, Address) {
+pub(crate) fn setup_credit<'a>(env: &'a Env) -> (CreditClient<'a>, Address, Address) {
     env.mock_all_auths();
     let admin = Address::generate(env);
     let contract_id = env.register(Credit, ());

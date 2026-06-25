@@ -1,16 +1,17 @@
 #![cfg(test)]
 
+use creditra_credit::{Credit, CreditClient};
 use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
-use creditra_credit::{CreditClient, Credit};
 
 fn setup(env: &Env) -> (CreditClient, Address, Address, Address) {
     env.mock_all_auths();
     let admin = Address::generate(env);
     let borrower = Address::generate(env);
-    
+
     let contract_id = env.register(Credit, ());
     let client = CreditClient::new(env, &contract_id);
     client.init(&admin);
+    client.set_min_collateral_ratio_bps(&15_000_u32);
 
     let token_id = env.register_stellar_asset_contract_v2(Address::generate(env));
     let token = token_id.address();
@@ -38,28 +39,28 @@ fn test_deposit_and_withdraw_collateral() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #31)")] // CollateralRatioBelowMinimum
+#[should_panic(expected = "Error(Contract, #35)")] // CollateralRatioBelowMinimum
 fn test_withdraw_breaches_min_ratio() {
     let env = Env::default();
     let (client, _, borrower, _) = setup(&env);
 
     client.open_credit_line(&borrower, &10000, &0, &0);
     client.deposit_collateral(&borrower, &2000); // Deposited 2000
-    
+
     client.draw_credit(&borrower, &1000); // Drew 1000. Required collateral = 1000 * 1.5 = 1500
 
     client.withdraw_collateral(&borrower, &1000); // Attempt to withdraw 1000, leaving 1000. 1000 < 1500 => PANIC
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #31)")] // CollateralRatioBelowMinimum
+#[should_panic(expected = "Error(Contract, #35)")] // CollateralRatioBelowMinimum
 fn test_draw_credit_breaches_min_ratio() {
     let env = Env::default();
     let (client, _, borrower, _) = setup(&env);
 
     client.open_credit_line(&borrower, &10000, &0, &0);
     client.deposit_collateral(&borrower, &1000); // Deposited 1000
-    
+
     // Attempt to draw 1000. Required collateral = 1000 * 1.5 = 1500. Have 1000. 1000 < 1500 => PANIC
     client.draw_credit(&borrower, &1000);
 }
@@ -71,7 +72,7 @@ fn test_draw_credit_succeeds_with_sufficient_collateral() {
 
     client.open_credit_line(&borrower, &10000, &0, &0);
     client.deposit_collateral(&borrower, &1500); // Deposited 1500
-    
+
     // Attempt to draw 1000. Required collateral = 1500. Have 1500. OK
     client.draw_credit(&borrower, &1000);
     assert_eq!(client.get_collateral(&borrower), 1500);

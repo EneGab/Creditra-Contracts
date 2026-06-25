@@ -54,10 +54,7 @@ impl SimplePriceOracle {
     ///
     /// Returns `0` when no price has been set yet.
     pub fn get_price(env: Env) -> i128 {
-        env.storage()
-            .instance()
-            .get(&PRICE_KEY)
-            .unwrap_or(0_i128)
+        env.storage().instance().get(&PRICE_KEY).unwrap_or(0_i128)
     }
 
     /// Admin-only price update used by tests to simulate oracle feed changes.

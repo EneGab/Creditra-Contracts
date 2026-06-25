@@ -16,7 +16,7 @@
 use creditra_credit::types::{ContractError, CreditStatus, OracleConfig};
 use creditra_credit::{Credit, CreditClient};
 use simple_price_oracle::{SimplePriceOracle, SimplePriceOracleClient};
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{token, Address, Env, Symbol};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -31,7 +31,12 @@ fn setup(env: &Env) -> (CreditClient, Address, Address) {
 }
 
 /// Open a credit line, draw `utilized`, then default it. Returns borrower.
-fn open_and_default(client: &CreditClient, env: &Env, contract_id: &Address, utilized: i128) -> Address {
+fn open_and_default(
+    client: &CreditClient,
+    env: &Env,
+    contract_id: &Address,
+    utilized: i128,
+) -> Address {
     let borrower = Address::generate(env);
 
     let token_id = env.register_stellar_asset_contract_v2(Address::generate(env));
@@ -39,10 +44,17 @@ fn open_and_default(client: &CreditClient, env: &Env, contract_id: &Address, uti
     client.set_liquidity_token(&token_addr);
     token::StellarAssetClient::new(env, &token_addr).mint(contract_id, &1_000_000_i128);
     token::StellarAssetClient::new(env, &token_addr).mint(&borrower, &1_000_000_i128);
-    token::Client::new(env, &token_addr).approve(&borrower, contract_id, &1_000_000_i128, &1_000_000_u32);
+    token::Client::new(env, &token_addr).approve(
+        &borrower,
+        contract_id,
+        &1_000_000_i128,
+        &1_000_000_u32,
+    );
 
     client.open_credit_line(&borrower, &10_000_i128, &300_u32, &60_u32);
     if utilized > 0 {
+        let required_collateral = (utilized.saturating_mul(15_000) + 9_999) / 10_000;
+        client.deposit_collateral(&borrower, &required_collateral);
         client.draw_credit(&borrower, &utilized);
     }
     client.default_credit_line(&borrower);
@@ -53,7 +65,7 @@ fn sid(env: &Env, s: &str) -> Symbol {
     Symbol::new(env, s)
 }
 
-fn deploy_oracle(env: &Env, admin: &Address, price: i128) -> SimplePriceOracleClient<'_> {
+fn deploy_oracle<'a>(env: &'a Env, admin: &Address, price: i128) -> SimplePriceOracleClient<'a> {
     let oracle_id = env.register(SimplePriceOracle, ());
     let client = SimplePriceOracleClient::new(env, &oracle_id);
     client.init(admin);
@@ -119,7 +131,10 @@ fn settle_without_oracle_config_accepts_none_price() {
     // No oracle config set — None price must be accepted.
     client.settle_default_liquidation(&borrower, &500_i128, &sid(&env, "s1"), &None);
 
-    assert_eq!(client.get_credit_line(&borrower).unwrap().status, CreditStatus::Closed);
+    assert_eq!(
+        client.get_credit_line(&borrower).unwrap().status,
+        CreditStatus::Closed
+    );
 }
 
 // ── first price acceptance ────────────────────────────────────────────────────
@@ -136,7 +151,10 @@ fn settle_with_oracle_config_first_price_accepted() {
     let price = oracle.get_price();
     client.settle_default_liquidation(&borrower, &500_i128, &sid(&env, "s1"), &Some(price));
 
-    assert_eq!(client.get_credit_line(&borrower).unwrap().status, CreditStatus::Closed);
+    assert_eq!(
+        client.get_credit_line(&borrower).unwrap().status,
+        CreditStatus::Closed
+    );
 }
 
 // ── within-bound deviation accepted ──────────────────────────────────────────
@@ -150,24 +168,17 @@ fn settle_within_deviation_bound_accepted() {
 
     // First settlement — seeds the last accepted price at 1_000.
     let b1 = open_and_default(&client, &env, &contract_id, 200);
-    client.settle_default_liquidation(
-        &b1,
-        &200_i128,
-        &sid(&env, "s1"),
-        &Some(oracle.get_price()),
-    );
+    client.settle_default_liquidation(&b1, &200_i128, &sid(&env, "s1"), &Some(oracle.get_price()));
 
     // Second settlement — admin updates mock feed to 1_040 (4% deviation).
     oracle.set_price(&1_040_i128);
     let b2 = open_and_default(&client, &env, &contract_id, 200);
-    client.settle_default_liquidation(
-        &b2,
-        &200_i128,
-        &sid(&env, "s2"),
-        &Some(oracle.get_price()),
-    );
+    client.settle_default_liquidation(&b2, &200_i128, &sid(&env, "s2"), &Some(oracle.get_price()));
 
-    assert_eq!(client.get_credit_line(&b2).unwrap().status, CreditStatus::Closed);
+    assert_eq!(
+        client.get_credit_line(&b2).unwrap().status,
+        CreditStatus::Closed
+    );
 }
 
 // ── over-deviation rejected ───────────────────────────────────────────────────
@@ -240,7 +251,10 @@ fn settle_price_at_exact_max_age_accepted() {
     let b2 = open_and_default(&client, &env, &contract_id, 200);
     client.settle_default_liquidation(&b2, &200_i128, &sid(&env, "s2"), &Some(1_010_i128));
 
-    assert_eq!(client.get_credit_line(&b2).unwrap().status, CreditStatus::Closed);
+    assert_eq!(
+        client.get_credit_line(&b2).unwrap().status,
+        CreditStatus::Closed
+    );
 }
 
 // ── invalid price ─────────────────────────────────────────────────────────────

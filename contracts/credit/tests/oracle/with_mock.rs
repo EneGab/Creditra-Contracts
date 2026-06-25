@@ -29,6 +29,9 @@ fn open_and_default(
 
     client.open_credit_line(&borrower, &10_000_i128, &300_u32, &60_u32);
     if utilized > 0 {
+        // Default init sets 150% min collateral ratio — seed enough collateral to draw.
+        let required_collateral = (utilized.saturating_mul(15_000) + 9_999) / 10_000;
+        client.deposit_collateral(&borrower, &required_collateral);
         client.draw_credit(&borrower, &utilized);
     }
     client.default_credit_line(&borrower);

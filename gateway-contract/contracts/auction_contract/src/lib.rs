@@ -67,6 +67,7 @@ use crate::storage::{
     clear_reentrancy_guard, get_factory_contract, set_factory_contract, set_reentrancy_guard,
 };
 use crate::types::*;
+pub use crate::types::AuctionMode;
 use events::{
     publish_auction_closed_event, publish_bid_refunded_event,
     publish_default_liquidation_settlement_event,
@@ -258,7 +259,7 @@ impl Auction {
         }
 
         let now = env.ledger().timestamp();
-        
+
         if now >= state.config.end_time {
             panic!("auction closed");
         }
@@ -369,10 +370,9 @@ impl Auction {
         credit_contract: Address,
         borrower: Address,
     ) -> i128 {
-        let factory = get_factory_contract(&env).unwrap_or_else(|| panic!(AuctionError::NoFactoryContract));
-        if env.invoker() != factory {
-            panic!(AuctionError::Unauthorized);
-        }
+        let factory = get_factory_contract(&env)
+            .unwrap_or_else(|| env.panic_with_error(AuctionError::NoFactoryContract));
+        factory.require_auth();
 
         let state: AuctionState = env
             .storage()

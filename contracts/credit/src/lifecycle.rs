@@ -93,11 +93,10 @@ use crate::events::{
 };
 use crate::risk::{MAX_INTEREST_RATE_BPS, MAX_RISK_SCORE};
 use crate::storage::{
-    assert_not_paused, assert_ts_monotonic, clear_repayment_schedule, persist_credit_line,
-    get_repayment_schedule as storage_get_repayment_schedule,
+    assert_not_paused, assert_ts_monotonic, clear_repayment_schedule, get_max_credit_limit,
+    get_min_credit_limit, get_repayment_schedule as storage_get_repayment_schedule,
+    persist_credit_line, set_max_credit_limit, set_min_credit_limit,
     set_repayment_schedule as storage_set_repayment_schedule,
-    get_min_credit_limit, set_min_credit_limit,
-    get_max_credit_limit, set_max_credit_limit,
 };
 use crate::types::{ContractError, CreditLineData, CreditStatus, RepaymentSchedule};
 use soroban_sdk::{symbol_short, Address, Env, Symbol};
@@ -738,51 +737,79 @@ pub fn reinstate_credit_line(env: Env, borrower: Address, target_status: CreditS
     );
 }
 
-/// Allow a borrower to voluntarily suspend their own credit line.
-///
-/// This function enables borrowers to freeze their own line of credit without admin intervention.
-/// Only the borrower who owns the credit line can invoke this action.
-///
-/// # Parameters
-/// - `borrower`: The borrower's address (must authorize this call).
-///
-/// # Authorization
-/// - Requires authorization from the `borrower` address.
-/// - Admin cannot invoke this function on behalf of a borrower.
-///
-/// # State Transitions
-/// - Valid: `Active` → `Suspended`
-/// - Invalid: Any other status (Suspended, Defaulted, Closed) will cause a panic.
-///
-/// # Post-Suspension Behavior
-/// - Draw operations are blocked while the line is self-suspended.
-/// - Repayment operations remain allowed.
-/// - Admin can reinstate the line to Active status via `reinstate_credit_line`.
-/// - Admin can force-close the line via `close_credit_line`.
-///
-/// # Panics
-/// - If no credit line exists for the given borrower.
-/// - If the credit line status is not `Active`.
-/// - If the caller is not the borrower (authorization failure).
-///
-/// # Events
-/// Emits a `("credit", "selfsus")` [`CreditLineEvent`] with the updated status.
-pub fn self_suspend_credit_line(env: Env, borrower: Address) {
-    // Require authorization from the borrower (not admin)
-    borrower.require_auth();
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests: close_credit_line authorization and utilization rules (#228)
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod test_close_credit_line {
+    use super::*;
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, Symbol, TryFromVal, TryIntoVal};
+    use soroban_sdk::{Address, Env};
 
-    let mut credit_line: CreditLineData = env
-        .storage()
-        .persistent()
-        .get(&borrower)
-        .expect("Credit line not found");
+    // Minimal in-module contract stub so tests can call the contract client without
+    // importing the full lib.rs (which has duplicate-mod issues in the upstream file).
+    // We test `close_credit_line` by calling lifecycle functions directly via a
+    // thin wrapper contract registered in the test environment.
 
-    // Apply interest accrual before any mutation
-    credit_line = crate::accrual::apply_accrual(&env, credit_line);
+    use crate::storage::DataKey;
+    use soroban_sdk::{contract, contractimpl};
 
-    // Only allow self-suspension from Active status
-    if credit_line.status != CreditStatus::Active {
-        panic!("Only active credit lines can be self-suspended");
+    #[contract]
+    struct TestCredit;
+
+    #[contractimpl]
+    impl TestCredit {
+        pub fn init(env: Env, admin: Address) {
+            let key = crate::storage::admin_key(&env);
+            env.storage().instance().set(&key, &admin);
+            env.storage()
+                .instance()
+                .set(&DataKey::LiquiditySource, &env.current_contract_address());
+        }
+
+        pub fn open(
+            env: Env,
+            borrower: Address,
+            credit_limit: i128,
+            interest_rate_bps: u32,
+            risk_score: u32,
+        ) {
+            open_credit_line(env, borrower, credit_limit, interest_rate_bps, risk_score);
+        }
+
+        pub fn draw(env: Env, borrower: Address, amount: i128) {
+            // Minimal draw: just mutate storage so we can test closing with utilization.
+            borrower.require_auth();
+            let mut line: CreditLineData = env
+                .storage()
+                .persistent()
+                .get(&borrower)
+                .expect("not found");
+            line.utilized_amount += amount;
+            env.storage().persistent().set(&borrower, &line);
+        }
+
+        pub fn close(env: Env, borrower: Address, closer: Address) {
+            close_credit_line(env, borrower, closer);
+        }
+
+        pub fn suspend(env: Env, borrower: Address) {
+            suspend_credit_line(env, borrower);
+        }
+
+        pub fn default_line(env: Env, borrower: Address) {
+            default_credit_line(env, borrower);
+        }
+
+        pub fn reinstate(env: Env, borrower: Address) {
+            reinstate_credit_line(env, borrower, crate::types::CreditStatus::Active);
+        }
+
+        pub fn get(env: Env, borrower: Address) -> Option<CreditLineData> {
+            env.storage().persistent().get(&borrower)
+        }
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -1014,12 +1041,13 @@ pub fn self_suspend_credit_line(env: Env, borrower: Address) {
         open_line(&client, &borrower);
 
         client.close(&borrower, &admin);
+        let event_count_after_first = env.events().all().len();
 
         client.close(&borrower, &admin); // idempotent
         let event_count_after_second = env.events().all().len();
 
         assert_eq!(
-            event_count_after_second, 0,
+            event_count_after_first, event_count_after_second,
             "idempotent close must not emit a second event"
         );
     }

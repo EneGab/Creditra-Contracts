@@ -2,9 +2,11 @@
 
 use creditra_credit::types::CreditStatus;
 use creditra_credit::{Credit, CreditClient};
-use gateway_auction::{Auction, AuctionClient};
+use gateway_auction::{Auction, AuctionClient, AuctionMode};
 use simple_price_oracle::{SimplePriceOracle, SimplePriceOracleClient};
 use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::Events as _;
+use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{token, Address, Env, Symbol, TryFromVal};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
@@ -20,13 +22,22 @@ fn setup_auction(
 
     let start_time = env.ledger().timestamp();
     let end_time = start_time + 1000;
-    auction.init_auction(settlement_id, &start_time, &end_time, &100_i128);
+    auction.init_auction(
+        settlement_id,
+        &AuctionMode::English,
+        &start_time,
+        &end_time,
+        &100_i128,
+        &0_u32,
+        &None,
+        &None,
+    );
 
     let bidder = Address::generate(env);
     auction.place_bid(settlement_id, &bidder, &recovered_amount);
 
-    env.ledger().with_mut(|ledger| {
-        ledger.timestamp = end_time;
+    env.ledger().with_mut(|li| {
+        li.timestamp = end_time;
     });
     auction.close_auction(settlement_id);
 }
@@ -57,6 +68,15 @@ fn setup_defaulted_line(utilized_amount: i128) -> (Env, Address, Address) {
     client.open_credit_line(&borrower, &10_000, &300_u32, &60_u32);
 
     if utilized_amount > 0 {
+        let required_collateral = (utilized_amount.saturating_mul(15_000) + 9_999) / 10_000;
+        token::StellarAssetClient::new(&env, &token_address).mint(&borrower, &required_collateral);
+        token::Client::new(&env, &token_address).approve(
+            &borrower,
+            &contract_id,
+            &required_collateral,
+            &1_000_000_u32,
+        );
+        client.deposit_collateral(&borrower, &required_collateral);
         client.draw_credit(&borrower, &utilized_amount);
     }
 
@@ -174,7 +194,12 @@ fn settle_default_liquidation_requires_defaulted_status() {
     client.draw_credit(&borrower, &500_i128);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        client.settle_default_liquidation(&borrower, &100_i128, &Symbol::new(&env, "auc_bad"), &None);
+        client.settle_default_liquidation(
+            &borrower,
+            &100_i128,
+            &Symbol::new(&env, "auc_bad"),
+            &None,
+        );
     }));
 
     assert!(result.is_err(), "non-defaulted settlement should panic");
@@ -253,20 +278,10 @@ fn settle_clears_reentrancy_guard_on_success() {
     let client = CreditClient::new(&env, &contract_id);
 
     // First settlement — should set and clear reentrancy guard
-    client.settle_default_liquidation(
-        &borrower,
-        &200_i128,
-        &Symbol::new(&env, "auc_re1"),
-        &None,
-    );
+    client.settle_default_liquidation(&borrower, &200_i128, &Symbol::new(&env, "auc_re1"), &None);
 
     // Second settlement with different id — proves guard was cleared
-    client.settle_default_liquidation(
-        &borrower,
-        &100_i128,
-        &Symbol::new(&env, "auc_re2"),
-        &None,
-    );
+    client.settle_default_liquidation(&borrower, &100_i128, &Symbol::new(&env, "auc_re2"), &None);
 
     let line = client.get_credit_line(&borrower).unwrap();
     assert_eq!(line.utilized_amount, 200); // 500 - 200 - 100
