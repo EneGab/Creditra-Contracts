@@ -398,7 +398,10 @@ pub fn clear_reentrancy_guard(env: &Env) {
 /// Set a per-borrower interest rate floor (admin only, enforced by caller).
 pub fn set_borrower_rate_floor(env: &Env, borrower: &Address, floor_bps: Option<u32>) {
     if let Some(floor) = floor_bps {
-        assert!(floor <= crate::risk::MAX_INTEREST_RATE_BPS, "floor exceeds max rate");
+        assert!(
+            floor <= crate::risk::MAX_INTEREST_RATE_BPS,
+            "floor exceeds max rate"
+        );
     }
     if let Some(floor) = floor_bps {
         env.storage()
@@ -418,11 +421,17 @@ pub fn get_borrower_rate_floor(env: &Env, borrower: &Address) -> Option<u32> {
         .get(&DataKey::RateFloorBps(borrower.clone()))
 }
 
-/// Set a per-borrower max utilization ratio cap in basis points (admin only).
-pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: u32) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::UtilizationCapBps(borrower.clone()), &cap_bps);
+/// Set or clear a per-borrower max utilization ratio cap in basis points.
+pub fn set_utilization_cap_bps(env: &Env, borrower: &Address, cap_bps: Option<u32>) {
+    if let Some(cap) = cap_bps {
+        env.storage()
+            .persistent()
+            .set(&DataKey::UtilizationCapBps(borrower.clone()), &cap);
+    } else {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::UtilizationCapBps(borrower.clone()));
+    }
 }
 
 /// Get the per-borrower max utilization ratio cap, if set.
@@ -450,6 +459,11 @@ pub fn set_borrower_blocked(env: &Env, borrower: &Address, blocked: bool) {
             .persistent()
             .remove(&DataKey::BlockedBorrower(borrower.clone()));
     }
+}
+
+/// Remove a borrower from the draw blocklist.
+pub fn set_borrower_unblocked(env: &Env, borrower: &Address) {
+    set_borrower_blocked(env, borrower, false);
 }
 
 /// Check if a borrower is blocked from drawing.
@@ -493,7 +507,9 @@ pub fn get_auction_contract(env: &Env) -> Option<Address> {
 
 /// Persist the auction contract address (admin only, enforced by caller).
 pub fn set_auction_contract(env: &Env, addr: &Address) {
-    env.storage().instance().set(&DataKey::AuctionContract, addr);
+    env.storage()
+        .instance()
+        .set(&DataKey::AuctionContract, addr);
 }
 
 /// Return the installment schedule for a borrower, if configured.
@@ -531,7 +547,9 @@ pub fn get_max_draw_amount(env: &Env) -> Option<i128> {
 
 /// Set the max draw amount (admin only, enforced by caller).
 pub fn set_max_draw_amount(env: &Env, amount: i128) {
-    env.storage().instance().set(&DataKey::MaxDrawAmount, &amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxDrawAmount, &amount);
 }
 
 /// Get the configured max repay amount, if set.
@@ -541,12 +559,16 @@ pub fn get_max_repay_amount(env: &Env) -> Option<i128> {
 
 /// Set the max repay amount (admin only, enforced by caller).
 pub fn set_max_repay_amount(env: &Env, amount: i128) {
-    env.storage().instance().set(&DataKey::MaxRepayAmount, &amount);
+    env.storage()
+        .instance()
+        .set(&DataKey::MaxRepayAmount, &amount);
 }
 
 /// Get the configured draw min interval, if set.
 pub fn get_draw_min_interval(env: &Env) -> Option<u64> {
-    env.storage().instance().get(&DataKey::DrawMinIntervalSeconds)
+    env.storage()
+        .instance()
+        .get(&DataKey::DrawMinIntervalSeconds)
 }
 
 /// Set the draw min interval (admin only, enforced by caller).
@@ -556,6 +578,95 @@ pub fn set_draw_min_interval(env: &Env, seconds: u64) {
         .set(&DataKey::DrawMinIntervalSeconds, &seconds);
 }
 
+// ── Protocol fee and treasury storage ────────────────────────────────────────
+
+/// Get the configured protocol fee in basis points, if any.
+pub fn get_protocol_fee_bps(env: &Env) -> Option<u32> {
+    env.storage().instance().get(&DataKey::ProtocolFeeBps)
+}
+
+/// Set the protocol fee in basis points.
+pub fn set_protocol_fee_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&DataKey::ProtocolFeeBps, &bps);
+}
+
+/// Get the configured treasury withdrawal address, if any.
+pub fn get_treasury_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::TreasuryAddress)
+}
+
+/// Set the treasury withdrawal address.
+pub fn set_treasury_address(env: &Env, addr: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TreasuryAddress, addr);
+}
+
+/// Get the accumulated treasury accounting balance.
+pub fn get_treasury_balance(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TreasuryBalance)
+        .unwrap_or(0)
+}
+
+/// Increase the treasury accounting balance using checked arithmetic.
+pub fn add_treasury_balance(env: &Env, amount: i128) -> i128 {
+    if amount < 0 {
+        env.panic_with_error(ContractError::InvalidAmount);
+    }
+    let updated = get_treasury_balance(env)
+        .checked_add(amount)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow));
+    env.storage()
+        .instance()
+        .set(&DataKey::TreasuryBalance, &updated);
+    updated
+}
+
+/// Clear the treasury accounting balance after a successful withdrawal.
+pub fn clear_treasury_balance(env: &Env) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TreasuryBalance, &0_i128);
+}
+
+// ── Collateral storage ───────────────────────────────────────────────────────
+
+/// Return the collateral token. The current implementation reuses the liquidity token.
+pub fn get_collateral_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::LiquidityToken)
+}
+
+/// Get a borrower's collateral balance.
+pub fn get_collateral_balance(env: &Env, borrower: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CollateralBalance(borrower.clone()))
+        .unwrap_or(0)
+}
+
+/// Set a borrower's collateral balance.
+pub fn set_collateral_balance(env: &Env, borrower: &Address, amount: i128) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::CollateralBalance(borrower.clone()), &amount);
+}
+
+/// Get the minimum collateral ratio in basis points, if configured.
+pub fn get_min_collateral_ratio_bps(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&DataKey::MinCollateralRatioBps)
+}
+
+/// Set the minimum collateral ratio in basis points.
+pub fn set_min_collateral_ratio_bps(env: &Env, bps: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MinCollateralRatioBps, &bps);
+}
+
 /// Set/unset the global draws frozen flag (admin only, enforced by caller).
 pub fn set_draws_frozen(env: &Env, frozen: bool) {
     env.storage().instance().set(&DataKey::DrawsFrozen, &frozen);
@@ -563,12 +674,18 @@ pub fn set_draws_frozen(env: &Env, frozen: bool) {
 
 /// Check if draws are globally frozen.
 pub fn is_draws_frozen(env: &Env) -> bool {
-    env.storage().instance().get(&DataKey::DrawsFrozen).unwrap_or(false)
+    env.storage()
+        .instance()
+        .get(&DataKey::DrawsFrozen)
+        .unwrap_or(false)
 }
 
 /// Check if the protocol is paused.
 pub fn is_paused(env: &Env) -> bool {
-    env.storage().instance().get(&paused_key(env)).unwrap_or(false)
+    env.storage()
+        .instance()
+        .get(&paused_key(env))
+        .unwrap_or(false)
 }
 
 /// Set the protocol pause state (admin only, enforced by caller).
@@ -646,8 +763,12 @@ pub fn get_oracle_last_price_ts(env: &Env) -> Option<u64> {
 /// The two `instance().set(..)` calls are part of the same host transaction,
 /// so observers cannot see a half-updated price/timestamp pair.
 pub fn set_oracle_last_price(env: &Env, price: i128, ts: u64) {
-    env.storage().instance().set(&DataKey::OracleLastPrice, &price);
-    env.storage().instance().set(&DataKey::OracleLastPriceTs, &ts);
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleLastPrice, &price);
+    env.storage()
+        .instance()
+        .set(&DataKey::OracleLastPriceTs, &ts);
 }
 
 // ── Penalty surcharge for delinquent lines ───────────────────────────────────
@@ -662,7 +783,10 @@ pub fn set_oracle_last_price(env: &Env, price: i128, ts: u64) {
 /// - **Type**: Instance storage
 /// - **Key**: [`DataKey::PenaltySurchargeBps`]
 pub fn get_penalty_surcharge_bps(env: &Env) -> u32 {
-    env.storage().instance().get(&DataKey::PenaltySurchargeBps).unwrap_or(0)
+    env.storage()
+        .instance()
+        .get(&DataKey::PenaltySurchargeBps)
+        .unwrap_or(0)
 }
 
 /// Set the penalty surcharge in basis points.
@@ -675,5 +799,7 @@ pub fn get_penalty_surcharge_bps(env: &Env) -> u32 {
 /// - **Type**: Instance storage
 /// - **Key**: [`DataKey::PenaltySurchargeBps`]
 pub fn set_penalty_surcharge_bps(env: &Env, bps: u32) {
-    env.storage().instance().set(&DataKey::PenaltySurchargeBps, &bps);
+    env.storage()
+        .instance()
+        .set(&DataKey::PenaltySurchargeBps, &bps);
 }

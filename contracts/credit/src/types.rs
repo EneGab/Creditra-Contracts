@@ -354,6 +354,7 @@ pub struct RateFormulaConfigEvent {
 /// that case the relevant entrypoints panic with
 /// [`ContractError::MissingLiquidityToken`] or
 /// [`ContractError::MissingLiquiditySource`].
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolConfig {
     /// Configured liquidity token.
