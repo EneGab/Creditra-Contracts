@@ -79,7 +79,7 @@ use soroban_sdk::{contracttype, Address, Env, Symbol};
 ///   (`CreditLineIdByBorrower`, `CreditLineBorrowerById`, `LastDrawTs`,
 ///   `BlockedBorrower`, `UtilizationCapBps`, `RateFloorBps`,
 ///   `RepaymentSchedule`, `CollateralBalance`, `DrawAudit`,
-///   `DrawReversedAmount`).
+///   `DrawReversedAmount`, `MaxBorrowerExposure`).
 ///
 /// Helper functions in this module always pick the correct tier; callers
 /// outside this module should never hit the storage API directly with these
@@ -153,6 +153,12 @@ pub enum DataKey {
     OracleLastPrice,
     /// Timestamp of the last accepted oracle price.
     OracleLastPriceTs,
+    /// Per-borrower absolute exposure ceiling (in token units).
+    /// When set, `draw_credit` enforces: `utilized_amount + amount <= cap`.
+    /// Admin-configurable via `set_max_borrower_exposure`. Stored in persistent
+    /// storage with the same TTL policy as other per-borrower keys.
+    /// Pass `0` to `set_max_borrower_exposure` to remove the ceiling.
+    MaxBorrowerExposure(Address),
 }
 
 /// Maximum number of credit lines returned per page.
@@ -676,4 +682,45 @@ pub fn get_penalty_surcharge_bps(env: &Env) -> u32 {
 /// - **Key**: [`DataKey::PenaltySurchargeBps`]
 pub fn set_penalty_surcharge_bps(env: &Env, bps: u32) {
     env.storage().instance().set(&DataKey::PenaltySurchargeBps, &bps);
+}
+
+// ── Per-borrower absolute exposure ceiling ────────────────────────────────────
+
+/// Get the per-borrower absolute exposure ceiling, if set.
+///
+/// Returns `None` when the ceiling has not been configured for `borrower`,
+/// meaning no per-borrower cap is enforced (only the global cap applies).
+///
+/// # Storage
+/// - **Type**: Persistent storage (TTL NOT bumped here — callers in the
+///   hot `draw_credit` path call this without a write, so TTL bumping is
+///   handled by the normal `CreditLineData` write that always follows a
+///   successful draw.)
+/// - **Key**: [`DataKey::MaxBorrowerExposure(borrower)`]
+pub fn get_max_borrower_exposure(env: &Env, borrower: &Address) -> Option<i128> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::MaxBorrowerExposure(borrower.clone()))
+}
+
+/// Set (or clear) the per-borrower absolute exposure ceiling.
+///
+/// Passing `cap = 0` removes the ceiling entirely for `borrower`.
+/// Positive values are stored as-is; the caller is responsible for
+/// validating that `cap > 0` before calling with a non-zero value.
+///
+/// # Storage
+/// - **Type**: Persistent storage
+/// - **Key**: [`DataKey::MaxBorrowerExposure(borrower)`]
+/// - **TTL**: Extended to [`LEDGER_BUMP_AMOUNT`] on every write.
+pub fn set_max_borrower_exposure(env: &Env, borrower: &Address, cap: i128) {
+    let key = DataKey::MaxBorrowerExposure(borrower.clone());
+    if cap == 0 {
+        env.storage().persistent().remove(&key);
+    } else {
+        env.storage().persistent().set(&key, &cap);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_BUMP_THRESHOLD, LEDGER_BUMP_AMOUNT);
+    }
 }

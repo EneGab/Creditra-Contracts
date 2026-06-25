@@ -136,6 +136,8 @@ use crate::storage::{
     set_last_draw_ts as storage_set_last_draw_ts,
     get_utilization_cap_bps as storage_get_utilization_cap_bps,
     set_utilization_cap_bps as storage_set_utilization_cap_bps,
+    get_max_borrower_exposure as storage_get_max_borrower_exposure,
+    set_max_borrower_exposure as storage_set_max_borrower_exposure,
 };
 use crate::types::{
     ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
@@ -466,6 +468,17 @@ impl Credit {
             if projected > max_exposure {
                 clear_reentrancy_guard(&env);
                 env.panic_with_error(ContractError::ExposureCapExceeded);
+            }
+        }
+
+        // Per-borrower absolute exposure ceiling: block draws that would push this
+        // borrower's utilized_amount above the admin-configured cap. Unlike the
+        // utilization cap (which is credit_limit-relative), this is an absolute
+        // token-unit ceiling independent of credit_limit fluctuations.
+        if let Some(borrower_cap) = storage_get_max_borrower_exposure(&env, &borrower) {
+            if updated_utilized > borrower_cap {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::BorrowerExposureCapExceeded);
             }
         }
 
@@ -921,6 +934,46 @@ impl Credit {
     /// Get the configured global exposure cap, or `None` if uncapped.
     pub fn get_max_total_exposure(env: Env) -> Option<i128> {
         crate::storage::get_max_total_exposure(&env)
+    }
+
+    /// Set a per-borrower absolute exposure ceiling (admin only).
+    ///
+    /// This ceiling is **decoupled from `credit_limit`**: the risk formula may
+    /// adjust `credit_limit` at any time, but the exposure ceiling remains at
+    /// the value explicitly set here until changed by admin. This lets risk teams
+    /// impose an independent, hard upper bound on what a single borrower can
+    /// draw regardless of how the rate formula sizes the line.
+    ///
+    /// `draw_credit` enforces: `utilized_amount + amount <= cap`.
+    /// Reverts with [`ContractError::BorrowerExposureCapExceeded`] on violation.
+    ///
+    /// Pass `0` to remove the per-borrower ceiling (no per-borrower limit).
+    ///
+    /// # Ordering with other draw-path checks
+    /// The per-borrower cap is evaluated **after** the global exposure cap and
+    /// **after** the `credit_limit` check, so both the line limit and the
+    /// protocol-wide cap still apply independently.
+    ///
+    /// # Parameters
+    /// - `borrower`: The borrower whose ceiling to configure.
+    /// - `cap`: Absolute maximum outstanding utilization in token units.
+    ///   Must be `> 0` to set; pass `0` to clear.
+    ///
+    /// # Errors
+    /// - Reverts with [`ContractError::InvalidAmount`] if `cap` is negative.
+    /// - Reverts if caller is not the configured admin.
+    pub fn set_max_borrower_exposure(env: Env, borrower: Address, cap: i128) {
+        require_admin_auth(&env);
+        if cap < 0 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+        storage_set_max_borrower_exposure(&env, &borrower, cap);
+    }
+
+    /// Get the per-borrower absolute exposure ceiling for `borrower`,
+    /// or `None` if no ceiling is configured.
+    pub fn get_max_borrower_exposure(env: Env, borrower: Address) -> Option<i128> {
+        storage_get_max_borrower_exposure(&env, &borrower)
     }
 
     /// Set global credit limit bounds (admin only).

@@ -129,6 +129,7 @@ pub enum CreditStatus {
 /// | 36   | `OraclePriceInvalid`          | Oracle price is invalid (zero, negative, or malformed) |
 /// | 37   | `OraclePriceStale`            | Oracle price is stale (exceeds max_age_seconds) |
 /// | 38   | `OraclePriceDeviation`        | Oracle price deviation exceeds the configured maximum |
+/// | 39   | `BorrowerExposureCapExceeded` | Draw would exceed the per-borrower absolute exposure ceiling |
 #[soroban_sdk::contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -209,6 +210,11 @@ pub enum ContractError {
     OraclePriceStale = 37,
     /// Oracle price deviation exceeds the configured maximum.
     OraclePriceDeviation = 38,
+    /// Draw would exceed the per-borrower absolute exposure ceiling set by admin.
+    /// Distinct from [`ExposureCapExceeded`] (discriminant 31) which guards the
+    /// global protocol-wide cap. Reverts when
+    /// `utilized_amount + amount > max_borrower_exposure`.
+    BorrowerExposureCapExceeded = 39,
 }
 
 /// Stored credit line data for a borrower.
