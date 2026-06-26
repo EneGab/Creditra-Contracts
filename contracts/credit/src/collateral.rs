@@ -38,12 +38,9 @@
 //!
 //! # Error reuse note
 //!
-//! Over-withdraw reverts with [`ContractError::InsufficientRepaymentBalance`]
-//! (`= 27`). This reuses the repay-side error variant rather than
-//! introducing a fourth balance-related error. SDK consumers must
-//! disambiguate by entrypoint context. See
-//! [`docs/contract-errors.md`](../../../docs/contract-errors.md) for the
-//! full error table.
+//! Over-withdraw reverts with [`ContractError::InsufficientCollateralBalance`]
+//! (`= 39`). See [`docs/contract-errors.md`](../../../docs/contract-errors.md)
+//! for the full error table.
 
 use crate::storage::{
     get_collateral_balance, set_collateral_balance, get_min_collateral_ratio_bps,
@@ -102,11 +99,7 @@ pub fn withdraw_collateral(env: &Env, borrower: &Address, amount: i128) {
     // Get current collateral balance
     let cur_balance = get_collateral_balance(env, borrower);
     if amount > cur_balance {
-        // We reuse `InsufficientRepaymentBalance` here to avoid expanding the
-        // error enum for this niche case; the semantics ("the caller asked to
-        // move more tokens than they have available") are close enough that
-        // SDK consumers can interpret the code without ambiguity.
-        env.panic_with_error(ContractError::InsufficientRepaymentBalance);
+        env.panic_with_error(ContractError::InsufficientCollateralBalance);
     }
 
     let post_balance = cur_balance - amount;
