@@ -875,6 +875,29 @@ impl Credit {
         query::is_delinquent(env, borrower)
     }
 
+    /// Return the collateral-aware health factor for a borrower, expressed in
+    /// basis points (bps).
+    ///
+    /// Off-chain keepers use this single query to decide whether a borrower is
+    /// under-collateralized and eligible for `default_credit_line`.
+    ///
+    /// # Interpretation
+    ///
+    /// - Returns `u32::MAX` when `utilized_amount == 0` (no debt → infinitely
+    ///   healthy).
+    /// - A value below `10_000` means the position is under-collateralized and
+    ///   eligible for liquidation (`default_credit_line`).
+    /// - A value of `10_000` means the collateral exactly covers the minimum
+    ///   required amount.
+    /// - A value above `10_000` means the position is over-collateralized
+    ///   relative to the minimum ratio.
+    ///
+    /// See [`query::get_health_factor`] for the full formula and edge-case
+    /// documentation.
+    pub fn get_health_factor(env: Env, borrower: Address) -> u32 {
+        query::get_health_factor(env, borrower)
+    }
+
     pub fn set_max_draw_amount(env: Env, amount: i128) {
         assert_not_paused(&env);
         require_admin_auth(&env);
@@ -5524,7 +5547,207 @@ mod test_mock_liquidity_token {
             let env = Env::default();
             let (client, _admin, _borrower, _token) = setup_with_token(&env);
 
-            client.set_max_repay_amount(&0_i128);
+        client.set_max_repay_amount(&0_i128);
+        }
+    }
+
+    // ── get_health_factor query tests ─────────────────────────────────────────
+    #[cfg(test)]
+    mod test_health_factor {
+        use super::*;
+        use soroban_sdk::testutils::Address as _;
+        use soroban_sdk::token::StellarAssetClient;
+        use crate::collateral;
+
+        /// Setup: contract + admin + borrower + token (used for both liquidity
+        /// and collateral — the contract shares one token).  `reserve` tokens
+        /// are minted to the contract so draws can succeed.
+        fn setup(
+            env: &Env,
+            credit_limit: i128,
+            reserve: i128,
+        ) -> (CreditClient<'_>, Address, Address, Address) {
+            env.mock_all_auths();
+            let admin = Address::generate(env);
+            let borrower = Address::generate(env);
+            let contract_id = env.register(Credit, ());
+            let client = CreditClient::new(env, &contract_id);
+            client.init(&admin);
+
+            // One token serves as both liquidity and collateral.
+            let token_id = env.register_stellar_asset_contract_v2(Address::generate(env));
+            let token = token_id.address();
+            client.set_liquidity_token(&token);
+            if reserve > 0 {
+                StellarAssetClient::new(env, &token).mint(&contract_id, &reserve);
+            }
+
+            client.open_credit_line(&borrower, &credit_limit, &300_u32, &70_u32);
+            (client, contract_id, borrower, token)
+        }
+
+        // ── edge case: no credit line → u32::MAX ─────────────────────────────
+
+        #[test]
+        fn no_credit_line_returns_max() {
+            let env = Env::default();
+            env.mock_all_auths();
+            let admin = Address::generate(&env);
+            let borrower = Address::generate(&env);
+            let contract_id = env.register(Credit, ());
+            let client = CreditClient::new(&env, &contract_id);
+            client.init(&admin);
+            assert_eq!(client.get_health_factor(&borrower), u32::MAX);
+        }
+
+        // ── edge case: zero utilized → u32::MAX ──────────────────────────────
+
+        #[test]
+        fn zero_utilized_returns_max() {
+            let env = Env::default();
+            let (client, _contract, borrower, _token) = setup(&env, 1_000, 0);
+            assert_eq!(client.get_health_factor(&borrower), u32::MAX);
+        }
+
+        // ── edge case: no collateral, with debt → health = 0 ─────────────────
+
+        #[test]
+        fn no_collateral_with_debt_returns_zero() {
+            let env = Env::default();
+            let (client, _contract, borrower, _token) = setup(&env, 1_000, 1_000);
+
+            // Draw without depositing any collateral.
+            client.draw_credit(&borrower, &500);
+
+            // health = 0 * 100_000_000 / (500 * 15_000) = 0
+            assert_eq!(client.get_health_factor(&borrower), 0);
+        }
+
+        // ── full integration: deposit collateral, draw, check ratio ──────────
+
+        #[test]
+        fn full_integration_draw_and_collateral() {
+            let env = Env::default();
+            let (client, contract_id, borrower, token) = setup(&env, 5_000, 10_000);
+
+            // Mint tokens to the borrower so they can deposit collateral.
+            StellarAssetClient::new(&env, &token).mint(&borrower, &10_000);
+            collateral::deposit_collateral(&env, &borrower, 3_000);
+
+            // No debt → u32::MAX.
+            assert_eq!(client.get_health_factor(&borrower), u32::MAX);
+
+            // Draw 2_000 — health exactly at threshold (10_000).
+            client.draw_credit(&borrower, &2_000);
+
+            let hf = client.get_health_factor(&borrower);
+            assert_eq!(hf, 10_000, "3k collateral / 2k debt @ 150 % = 10_000");
+
+            // Draw another 500 → utilized = 2_500, under-collateralized.
+            client.draw_credit(&borrower, &500);
+
+            let hf2 = client.get_health_factor(&borrower);
+            assert!(hf2 < 10_000, "expected under-collateralized, got {}", hf2);
+            assert_eq!(hf2, 8_000);
+
+            // Repay 1_500 → utilized = 1_000, over-collateralized.
+            // The borrower already has 2_500 tokens from the two draws.
+            soroban_sdk::token::Client::new(&env, &token).approve(
+                &borrower,
+                &contract_id,
+                &5_000,
+                &1_000_000_u32,
+            );
+            client.repay_credit(&borrower, &1_500);
+
+            let hf3 = client.get_health_factor(&borrower);
+            assert!(hf3 > 10_000, "expected over-collateralized, got {}", hf3);
+            assert_eq!(hf3, 20_000);
+        }
+
+        // ── read-only: repeated queries produce the same result ───────────────
+
+        #[test]
+        fn query_is_read_only() {
+            let env = Env::default();
+            let (client, _contract, borrower, token) = setup(&env, 1_000, 0);
+
+            StellarAssetClient::new(&env, &token).mint(&borrower, &10_000);
+            collateral::deposit_collateral(&env, &borrower, 1_500);
+
+            let hf_before = client.get_health_factor(&borrower);
+            let hf_after = client.get_health_factor(&borrower);
+            assert_eq!(hf_before, hf_after);
+
+            let line_before = client.get_credit_line(&borrower).unwrap();
+            let collateral_before = client.get_collateral(&borrower);
+
+            let hf_again = client.get_health_factor(&borrower);
+
+            let line_after = client.get_credit_line(&borrower).unwrap();
+            let collateral_after = client.get_collateral(&borrower);
+
+            assert_eq!(hf_again, hf_before);
+            assert_eq!(line_before.utilized_amount, line_after.utilized_amount);
+            assert_eq!(
+                line_before.accrued_interest,
+                line_after.accrued_interest
+            );
+            assert_eq!(collateral_before, collateral_after);
+        }
+
+        // ── default min_ratio fallback (15_000) ──────────────────────────────
+
+        #[test]
+        fn default_min_collateral_ratio_is_15000() {
+            let env = Env::default();
+            let (client, _contract, borrower, token) = setup(&env, 1_000, 10_000);
+
+            StellarAssetClient::new(&env, &token).mint(&borrower, &10_000);
+            collateral::deposit_collateral(&env, &borrower, 1_500);
+            client.draw_credit(&borrower, &1_000);
+
+            // health = 1_500 * 100_000_000 / (1_000 * 15_000) = 10_000
+            assert_eq!(client.get_health_factor(&borrower), 10_000);
+        }
+
+        // ── keeper-style: below threshold → keeper should liquidate ──────────
+
+        #[test]
+        fn keeper_scenario_below_threshold_triggers_liquidation() {
+            let env = Env::default();
+            let (client, _contract, borrower, token) = setup(&env, 5_000, 10_000);
+
+            StellarAssetClient::new(&env, &token).mint(&borrower, &10_000);
+            collateral::deposit_collateral(&env, &borrower, 3_000);
+            client.draw_credit(&borrower, &2_500);
+
+            // health = 3_000 * 100_000_000 / (2_500 * 15_000) = 8_000 < 10_000
+            let hf = client.get_health_factor(&borrower);
+            assert!(hf < 10_000, "health factor {} should be below 10_000", hf);
+            assert_eq!(hf, 8_000);
+
+            // A keeper checking hf < 10_000 triggers default_credit_line.
+            client.default_credit_line(&borrower);
+            let line = client.get_credit_line(&borrower).unwrap();
+            assert_eq!(line.status, CreditStatus::Defaulted);
+        }
+
+        // ── keeper-style: healthy position → keeper skips ───────────────────
+
+        #[test]
+        fn keeper_scenario_healthy_position_skipped() {
+            let env = Env::default();
+            let (client, _contract, borrower, token) = setup(&env, 5_000, 10_000);
+
+            StellarAssetClient::new(&env, &token).mint(&borrower, &10_000);
+            collateral::deposit_collateral(&env, &borrower, 10_000);
+            client.draw_credit(&borrower, &1_000);
+
+            // health = 10_000 * 100_000_000 / (1_000 * 15_000) = 66_666 > 10_000
+            let hf = client.get_health_factor(&borrower);
+            assert!(hf > 10_000, "health factor {} should be above 10_000", hf);
+            assert_eq!(hf, 66_666);
         }
     }
 }

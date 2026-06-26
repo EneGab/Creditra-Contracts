@@ -358,6 +358,7 @@ emits `("credit","rate_form")` with `true`.
 | `get_treasury()` | `Option<Address>` |
 | `get_protocol_fee_bps()` | `Option<u32>` |
 | `get_collateral(borrower)` | `i128` |
+| `get_health_factor(borrower)` | `u32` (bps-scaled, `u32::MAX` when no debt; `< 10_000` = liquidatable; see `query.rs:get_health_factor`) |
 
 Reads with persistent borrower data invoke `bump_credit_line_ttl` (a write,
 but cheap and idempotent — see `storage.rs:146`).
