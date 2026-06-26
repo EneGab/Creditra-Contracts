@@ -56,10 +56,11 @@ be reordered or renumbered; new variants must be appended.
 | 36 | `OraclePriceInvalid` | Oracle price is zero, negative, or malformed. |
 | 37 | `OraclePriceStale` | Oracle price exceeds `max_age_seconds`. |
 | 38 | `OraclePriceDeviation` | Oracle price deviation exceeds configured maximum. |
+| 39 | `InsufficientCollateralBalance` | Borrower collateral balance below withdrawal amount. |
 
 ## Taxonomy
 
 See [`docs/error-taxonomy.md`](./error-taxonomy.md) for the authoritative
-grouping of all 38 variants into **named categories** (Auth, Lifecycle,
+grouping of all 39 variants into **named categories** (Auth, Lifecycle,
 Numeric, Limit, Liquidity, Risk, Oracle, Collateral, Block, Reentrancy, Misc)
 with **SDK-side recovery actions** per category.

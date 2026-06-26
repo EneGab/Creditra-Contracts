@@ -131,6 +131,7 @@ pub enum CreditStatus {
 /// | 36   | `OraclePriceInvalid`          | Oracle price is invalid (zero, negative, or malformed) |
 /// | 37   | `OraclePriceStale`            | Oracle price is stale (exceeds max_age_seconds) |
 /// | 38   | `OraclePriceDeviation`        | Oracle price deviation exceeds the configured maximum |
+/// | 39   | `InsufficientCollateralBalance` | Borrower collateral balance cannot cover withdrawal |
 #[soroban_sdk::contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -211,6 +212,8 @@ pub enum ContractError {
     OraclePriceStale = 37,
     /// Oracle price deviation exceeds the configured maximum.
     OraclePriceDeviation = 38,
+    /// Borrower's collateral balance is below the requested withdrawal amount.
+    InsufficientCollateralBalance = 39,
 }
 
 /// Stored credit line data for a borrower.
