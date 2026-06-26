@@ -143,7 +143,7 @@ fn run_conservation_test(env: &Env, draw_amount: i128, highest_bid: i128) {
     assert_eq!(auction_state.highest_bid, highest_bid);
 
     // Settle default liquidation (credit contract calls auction contract)
-    credit.settle_default_liquidation(&deployment.borrower, &highest_bid, &settlement_id, &None);
+    credit.settle_default_liquidation(&deployment.borrower, &highest_bid, &settlement_id, &10_000_u32, &None);
 
     // Check conservation
     let post_line = credit.get_credit_line(&deployment.borrower).unwrap();
@@ -159,7 +159,7 @@ fn run_conservation_test(env: &Env, draw_amount: i128, highest_bid: i128) {
 
     // Verify replay fails
     let replay_result = std::panic::catch_unwind(|| {
-        credit.settle_default_liquidation(&deployment.borrower, &highest_bid, &settlement_id, &None);
+        credit.settle_default_liquidation(&deployment.borrower, &highest_bid, &settlement_id, &10_000_u32, &None);
     });
     assert!(replay_result.is_err(), "replay should panic");
 }

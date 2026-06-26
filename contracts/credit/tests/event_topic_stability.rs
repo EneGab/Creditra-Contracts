@@ -53,6 +53,7 @@ fn test_event_topics_stability() {
         recovered_amount: 20,
         remaining_utilized_amount: 35,
         status: CreditStatus::Active,
+        close_factor_bps: 10_000,
     });
     publish_admin_rotation_proposed(&env, &admin, 100);
     publish_admin_rotation_accepted(&env, &admin);

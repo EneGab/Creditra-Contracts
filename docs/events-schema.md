@@ -53,7 +53,7 @@ Topics use `symbol_short!` (≤ 9 chars) to use cheap `SCV_SYMBOL` on-chain enco
 | ("credit","drw_freeze") | DrawsFrozenEvent | 1. frozen: bool | 1.0.0 | -
 | ("credit","rate_form") | bool | (single value, no struct | 1.0.0 | -
 | ("credit","liq_req") | (Address, i128) | 1. borrower: Address, 2. utilized_amount: i128 | 1.0.0 | -
-| ("credit","liq_setl") | DefaultLiquidationSettledEvent | 1. borrower: Address, 2. settlement_id: Symbol, 3. recovered_amount: i128, 4. remaining_utilized_amount: i128, 5. status: CreditStatus | 1.0.0 | -
+| ("credit","liq_setl") | DefaultLiquidationSettledEvent | 1. borrower: Address, 2. settlement_id: Symbol, 3. recovered_amount: i128, 4. remaining_utilized_amount: i128, 5. status: CreditStatus, 6. close_factor_bps: u32 | 1.0.0 | -
 | ("credit","paused") | bool | single boolean value | 1.0.0 | -
 | ("credit","unpaused") | bool | single boolean value | 1.0.0 | -
 | ("blk_chg",) | BorrowerBlockedEvent | 1. borrower: Address, 2. blocked: bool, 3. ledger: u32 | 1.0.0 | -

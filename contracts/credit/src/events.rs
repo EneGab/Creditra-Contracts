@@ -88,6 +88,7 @@ pub struct DefaultLiquidationSettledEvent {
     pub recovered_amount: i128,
     pub remaining_utilized_amount: i128,
     pub status: CreditStatus,
+    pub close_factor_bps: u32,
 }
 
 #[contracttype]

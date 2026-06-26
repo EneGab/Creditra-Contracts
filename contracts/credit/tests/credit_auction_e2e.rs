@@ -122,7 +122,7 @@ fn settle_credit_from_auction(
     recovered_amount: i128,
 ) {
     let credit = CreditClient::new(env, &deployment.credit_id);
-    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, settlement_id, &None);
+    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, settlement_id, &10_000_u32, &None);
     assert_event_topic(env, &deployment.credit_id, "credit", "liq_setl");
 }
 
@@ -228,7 +228,7 @@ fn e2e_atomic_settlement_with_configured_auction() {
     // Call settle_default_liquidation on the credit contract!
     // It should atomically call settle_default_liquidation on the auction contract,
     // reconcile the bid amount, and close the defaulted line!
-    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, &settlement_id, &None);
+    credit.settle_default_liquidation(&deployment.borrower, &recovered_amount, &settlement_id, &10_000_u32, &None);
 
     let line = credit.get_credit_line(&deployment.borrower).unwrap();
     assert_eq!(line.utilized_amount, 0);

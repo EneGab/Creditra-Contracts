@@ -1,4 +1,9 @@
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
+use creditra_credit::types::CreditStatus;
+use creditra_credit::{Credit, CreditClient};
 use gateway_auction::{Auction, AuctionClient};
+use soroban_sdk::{token, Address, Env, Symbol};
 
 fn setup_auction(
     env: &Env,
@@ -85,7 +90,7 @@ fn settle_partial_default_liquidation_and_block_replay() {
     let client = CreditClient::new(&env, &contract_id);
     let settlement_id = Symbol::new(&env, "auc_001");
 
-    client.settle_default_liquidation(&borrower, &300_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &300_i128, &settlement_id, &10_000_u32, &None);
     assert!(has_event_topic(&env, "liq_setl"));
 
     let line = client.get_credit_line(&borrower).unwrap();
@@ -93,7 +98,7 @@ fn settle_partial_default_liquidation_and_block_replay() {
     assert_eq!(line.utilized_amount, 700);
 
     let replay = catch_unwind(AssertUnwindSafe(|| {
-        client.settle_default_liquidation(&borrower, &50_i128, &settlement_id, &None);
+        client.settle_default_liquidation(&borrower, &50_i128, &settlement_id, &10_000_u32, &None);
     }));
     assert!(replay.is_err(), "replay settlement should panic");
 }
@@ -103,7 +108,7 @@ fn settle_full_default_liquidation_closes_credit_line() {
     let (env, contract_id, borrower) = setup_defaulted_line(450);
     let client = CreditClient::new(&env, &contract_id);
 
-    client.settle_default_liquidation(&borrower, &450_i128, &Symbol::new(&env, "auc_fin"), &None);
+    client.settle_default_liquidation(&borrower, &450_i128, &Symbol::new(&env, "auc_fin"), &10_000_u32, &None);
     assert!(has_event_topic(&env, "closed"));
     assert!(has_event_topic(&env, "liq_setl"));
 
@@ -140,7 +145,7 @@ fn settle_default_liquidation_requires_defaulted_status() {
     client.draw_credit(&borrower, &500_i128);
 
     let result = catch_unwind(AssertUnwindSafe(|| {
-        client.settle_default_liquidation(&borrower, &100_i128, &Symbol::new(&env, "auc_bad"), &None);
+        client.settle_default_liquidation(&borrower, &100_i128, &Symbol::new(&env, "auc_bad"), &10_000_u32, &None);
     }));
 
     assert!(result.is_err(), "non-defaulted settlement should panic");
@@ -182,7 +187,7 @@ fn settle_with_auction_contract_configured_reduces_debt() {
     setup_auction(&env, &contract_id, &auction_addr, &settlement_id, 400_i128);
 
     // Settle partial — will atomically invoke the configured auction hook!
-    client.settle_default_liquidation(&borrower, &400_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &400_i128, &settlement_id, &10_000_u32, &None);
 
     let line = client.get_credit_line(&borrower).unwrap();
     assert_eq!(line.status, CreditStatus::Defaulted);
@@ -204,7 +209,7 @@ fn settle_full_with_auction_contract_closes_line() {
     setup_auction(&env, &contract_id, &auction_addr, &settlement_id, 800_i128);
 
     // Full settlement: recovered == utilized → should close line atomically
-    client.settle_default_liquidation(&borrower, &800_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &800_i128, &settlement_id, &10_000_u32, &None);
 
     let line = client.get_credit_line(&borrower).unwrap();
     assert_eq!(line.status, CreditStatus::Closed);
@@ -223,6 +228,7 @@ fn settle_clears_reentrancy_guard_on_success() {
         &borrower,
         &200_i128,
         &Symbol::new(&env, "auc_re1"),
+        &10_000_u32,
         &None,
     );
 
@@ -231,6 +237,7 @@ fn settle_clears_reentrancy_guard_on_success() {
         &borrower,
         &100_i128,
         &Symbol::new(&env, "auc_re2"),
+        &10_000_u32,
         &None,
     );
 

@@ -246,7 +246,7 @@ fn settle_default_liquidation_unauthorized() {
     let (client, contract_id, admin, borrower) = setup(&env);
     admin_default(&env, &client, &admin, &contract_id, &borrower);
     let settlement_id = Symbol::new(&env, "settle_1");
-    client.settle_default_liquidation(&borrower, &100_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &100_i128, &settlement_id, &10_000_u32, &None);
 }
 
 #[test]
@@ -653,7 +653,7 @@ fn settle_default_liquidation_unauthorized() {
     let (client, contract_id, admin, borrower) = setup(&env);
     admin_default(&env, &client, &admin, &contract_id, &borrower);
     let settlement_id = Symbol::new(&env, "settle_1");
-    client.settle_default_liquidation(&borrower, &100_i128, &settlement_id, &None);
+    client.settle_default_liquidation(&borrower, &100_i128, &settlement_id, &10_000_u32, &None);
 }
 
 #[test]
