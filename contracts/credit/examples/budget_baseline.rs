@@ -205,9 +205,9 @@ fn main() {
 
     // ── freeze_draws ──────────────────────────────────────────────────────
     {
-        let (env, credit, ..) = setup_credit_harness();
-        let sample = BudgetSample::measure(&env, || {
-            credit.freeze_draws();
+        let (env, credit, ..) = setup();
+        let (cpu, mem) = measure(&env, || {
+            credit.freeze_draws(&creditra_credit::FreezeReason::LiquidityReserve);
         });
         push(
             &mut results,
@@ -219,9 +219,9 @@ fn main() {
 
     // ── unfreeze_draws ────────────────────────────────────────────────────
     {
-        let (env, credit, ..) = setup_credit_harness();
-        credit.freeze_draws();
-        let sample = BudgetSample::measure(&env, || {
+        let (env, credit, ..) = setup();
+        credit.freeze_draws(&creditra_credit::FreezeReason::LiquidityReserve);
+        let (cpu, mem) = measure(&env, || {
             credit.unfreeze_draws();
         });
         push(

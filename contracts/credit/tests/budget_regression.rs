@@ -150,21 +150,37 @@ fn budget_accrue_batch() {
 // ── 12. freeze_draws / unfreeze_draws ──────────────────────────────────────
 #[test]
 fn budget_freeze_draws() {
-    let (env, credit, ..) = setup_credit_harness();
-    let sample = BudgetSample::measure(&env, || {
-        credit.freeze_draws();
-    });
-    check(entrypoint::FREEZE_DRAWS, sample);
+    let baselines = load_baselines();
+    let (env, credit, _token, _admin, _borrower) = setup();
+    budget(&env).reset_unlimited();
+    credit.freeze_draws(&creditra_credit::FreezeReason::LiquidityReserve);
+    let cpu = budget(&env).cpu_instruction_cost();
+    let mem = budget(&env).memory_bytes_cost();
+    if let Some(b) = baselines.get("freeze_draws") {
+        assert_within_tolerance("freeze_draws", cpu, mem, b);
+    } else {
+        println!(
+            "[budget_regression] no baseline for 'freeze_draws'; observed cpu={cpu} mem={mem}"
+        );
+    }
 }
 
 #[test]
 fn budget_unfreeze_draws() {
-    let (env, credit, ..) = setup_credit_harness();
-    credit.freeze_draws();
-    let sample = BudgetSample::measure(&env, || {
-        credit.unfreeze_draws();
-    });
-    check(entrypoint::UNFREEZE_DRAWS, sample);
+    let baselines = load_baselines();
+    let (env, credit, _token, _admin, _borrower) = setup();
+    credit.freeze_draws(&creditra_credit::FreezeReason::LiquidityReserve);
+    budget(&env).reset_unlimited();
+    credit.unfreeze_draws();
+    let cpu = budget(&env).cpu_instruction_cost();
+    let mem = budget(&env).memory_bytes_cost();
+    if let Some(b) = baselines.get("unfreeze_draws") {
+        assert_within_tolerance("unfreeze_draws", cpu, mem, b);
+    } else {
+        println!(
+            "[budget_regression] no baseline for 'unfreeze_draws'; observed cpu={cpu} mem={mem}"
+        );
+    }
 }
 
 // ── 13. default_credit_line ───────────────────────────────────────────────
