@@ -223,10 +223,8 @@ pub enum ContractError {
     OraclePriceDeviation = 38,
     /// Borrower's collateral balance is below the requested withdrawal amount.
     InsufficientCollateralBalance = 39,
-    /// Borrower's draws are temporarily frozen until the specified expiry timestamp.
-    BorrowerFrozen = 40,
-    /// Bounty pool address is not configured when attempting a bounty withdrawal.
-    BountyNotSet = 41,
+    /// The supplied close_factor_bps exceeds the protocol-configured maximum.
+    CloseFactorAboveMax = 40,
 }
 
 /// Stored credit line data for a borrower.

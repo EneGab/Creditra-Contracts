@@ -337,10 +337,161 @@ pub fn reinstate_credit_line(env: Env, borrower: Address) {
         env.panic_with_error(ContractError::CreditLineClosed);
     }
 
-    credit_line.status = CreditStatus::Active;
-    env.storage().persistent().set(&borrower, &credit_line);
-    // Bump TTL: reinstated lines restart their active lifecycle.
-    bump_credit_line_ttl(&env, &borrower);
+    let mut credit_line = crate::accrual::apply_accrual(&env, stored_line);
+    let effective_forgive = amount.min(credit_line.utilized_amount);
+    let interest_forgiven = effective_forgive.min(credit_line.accrued_interest);
+
+    credit_line.accrued_interest = credit_line
+        .accrued_interest
+        .checked_sub(interest_forgiven)
+        .unwrap_or(0);
+    credit_line.utilized_amount = credit_line
+        .utilized_amount
+        .checked_sub(effective_forgive)
+        .unwrap_or(0);
+
+    persist_credit_line(&env, &borrower, &credit_line, previous_utilized);
+}
+
+/// Apply auction liquidation proceeds to a defaulted credit line (admin only).
+///
+/// This hook is accounting-only and intentionally performs no token transfer.
+/// Off-chain orchestration is responsible for ensuring auction proceeds are settled
+/// into protocol custody before this function is called.
+pub fn settle_default_liquidation(
+    env: Env,
+    borrower: Address,
+    recovered_amount: i128,
+    settlement_id: Symbol,
+    close_factor_bps: u32,
+) {
+    require_admin_auth(&env);
+
+    if recovered_amount <= 0 {
+        env.panic_with_error(ContractError::InvalidAmount);
+    }
+
+    if close_factor_bps == 0 || close_factor_bps > 10_000 {
+        env.panic_with_error(ContractError::InvalidAmount);
+    }
+
+    let max_close_factor = crate::storage::get_close_factor_bps(&env);
+    if close_factor_bps > max_close_factor {
+        env.panic_with_error(ContractError::CloseFactorAboveMax);
+    }
+
+    let settlement_key = liquidation_settlement_key(&borrower, &settlement_id);
+    if env.storage().persistent().has(&settlement_key) {
+        env.panic_with_error(ContractError::AlreadyInitialized);
+    }
+
+    let stored_line: CreditLineData = env
+        .storage()
+        .persistent()
+        .get(&borrower)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::CreditLineNotFound));
+    let previous_utilized = stored_line.utilized_amount;
+
+    // Apply interest accrual before any mutation
+    let mut credit_line = crate::accrual::apply_accrual(&env, stored_line);
+
+    if credit_line.status != CreditStatus::Defaulted {
+        env.panic_with_error(ContractError::CreditLineDefaulted);
+    }
+
+    // Compute the maximum recoverable amount for this settlement
+    let target_recovery = credit_line
+        .utilized_amount
+        .checked_mul(close_factor_bps as i128)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow))
+        / 10_000;
+
+    if recovered_amount > target_recovery {
+        env.panic_with_error(ContractError::OverLimit);
+    }
+
+    credit_line.utilized_amount = credit_line
+        .utilized_amount
+        .checked_sub(recovered_amount)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::Overflow));
+
+    if credit_line.utilized_amount == 0 {
+        credit_line.status = CreditStatus::Closed;
+    }
+
+    persist_credit_line(&env, &borrower, &credit_line, previous_utilized);
+    if credit_line.status == CreditStatus::Closed {
+        clear_repayment_schedule(&env, &borrower);
+    }
+    env.storage().persistent().set(&settlement_key, &true);
+
+    if credit_line.status == CreditStatus::Closed {
+        publish_credit_line_event(
+            &env,
+            (symbol_short!("credit"), symbol_short!("closed")),
+            CreditLineEvent {
+                borrower: borrower.clone(),
+                status: CreditStatus::Closed,
+                credit_limit: credit_line.credit_limit,
+                interest_rate_bps: credit_line.interest_rate_bps,
+                risk_score: credit_line.risk_score,
+            },
+        );
+    }
+
+    publish_default_liquidation_settled_event(
+        &env,
+        DefaultLiquidationSettledEvent {
+            borrower,
+            settlement_id,
+            recovered_amount,
+            remaining_utilized_amount: credit_line.utilized_amount,
+            status: credit_line.status,
+            close_factor_bps,
+        },
+    );
+}
+
+// ── reinstate_credit_line ─────────────────────────────────────────────────────
+
+/// Reinstate a `Defaulted` credit line to either `Active` or `Restricted` (admin only).
+///
+/// Valid transitions: `Defaulted` → `Active` | `Defaulted` → `Restricted`.
+/// `Restricted` is used when the credit limit was reduced below the outstanding balance
+/// and the borrower must repay the excess before draws are re-enabled.
+///
+/// # Panics
+/// - `ContractError::InvalidAmount` — `target_status` is not `Active` or `Restricted`.
+/// - `ContractError::CreditLineNotFound` — no credit line exists for `borrower`.
+/// - `ContractError::CreditLineDefaulted` — current status is not `Defaulted`.
+///
+/// # Events
+/// Emits a `("credit", "reinstate")` [`CreditLineEvent`].
+pub fn reinstate_credit_line(env: Env, borrower: Address, target_status: CreditStatus) {
+    assert_not_paused(&env);
+    require_admin_auth(&env);
+
+    // Only Active and Restricted are valid reinstate targets per the state-machine spec.
+    if target_status != CreditStatus::Active && target_status != CreditStatus::Restricted {
+        env.panic_with_error(ContractError::InvalidAmount);
+    }
+
+    let stored_line: CreditLineData = env
+        .storage()
+        .persistent()
+        .get(&borrower)
+        .unwrap_or_else(|| env.panic_with_error(ContractError::CreditLineNotFound));
+    let previous_utilized = stored_line.utilized_amount;
+
+    let mut credit_line = crate::accrual::apply_accrual(&env, stored_line);
+
+    if credit_line.status != CreditStatus::Defaulted {
+        env.panic_with_error(ContractError::CreditLineDefaulted);
+    }
+
+    credit_line.status = target_status;
+    credit_line.suspension_ts = 0;
+    persist_credit_line(&env, &borrower, &credit_line, previous_utilized);
 
     publish_credit_line_event(
         &env,

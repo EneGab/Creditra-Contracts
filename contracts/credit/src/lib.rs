@@ -126,9 +126,9 @@ mod views_tests;
 use crate::auth::require_admin_auth;
 use crate::events::{
     publish_admin_rotation_accepted, publish_admin_rotation_proposed,
-    publish_borrower_blocked_event, publish_borrower_frozen_event, publish_contract_upgraded_event,
-    publish_credit_line_event, publish_draw_reversed_event, publish_drawn_event,
-    publish_interest_accrued_event, publish_oracle_config_set_event,
+    publish_borrower_blocked_event, publish_close_factor_bps_set_event,
+    publish_contract_upgraded_event, publish_credit_line_event, publish_draw_reversed_event,
+    publish_drawn_event, publish_interest_accrued_event, publish_oracle_config_set_event,
     publish_oracle_price_accepted_event, publish_rate_formula_config_event,
     publish_repayment_event, publish_token_rescued_event, ContractUpgradedEvent, CreditLineEvent,
     DrawReversedEvent, DrawnEvent, InterestAccruedEvent, RepaymentEvent,
@@ -1137,8 +1137,257 @@ impl Credit {
         lifecycle::reinstate_credit_line(env, borrower, target_status)
     }
 
-    /// Get credit line data for a borrower (view function).
-    /// Also bumps the TTL to keep the entry live when it is being read.
+    /// Apply auction liquidation proceeds to a defaulted credit line (admin only).
+    ///
+    /// This is accounting-only: no token transfer occurs here. Off-chain
+    /// orchestration must ensure auction proceeds are in protocol custody
+    /// before invoking this function.
+    ///
+    /// # Reentrancy
+    /// Protected by the contract-wide reentrancy guard to prevent cross-contract
+    /// callback attacks during settlement.
+    pub fn settle_default_liquidation(
+        env: Env,
+        borrower: Address,
+        recovered_amount: i128,
+        settlement_id: Symbol,
+        close_factor_bps: u32,
+        oracle_price: Option<i128>,
+    ) {
+        // Reentrancy guard: settlement touches accounting and may interact
+        // with an external auction contract, so we guard the full path.
+        set_reentrancy_guard(&env);
+
+        // Oracle price-feed circuit breaker: validate price before settlement.
+        if let Some(cfg) = crate::storage::get_oracle_config(&env) {
+            let price = oracle_price.unwrap_or_else(|| {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::OraclePriceInvalid)
+            });
+
+            if price <= 0 {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::OraclePriceInvalid);
+            }
+
+            let now = env.ledger().timestamp();
+
+            if let Some(last_ts) = crate::storage::get_oracle_last_price_ts(&env) {
+                let age = now.saturating_sub(last_ts);
+                if age > cfg.max_age_seconds {
+                    clear_reentrancy_guard(&env);
+                    env.panic_with_error(ContractError::OraclePriceStale);
+                }
+
+                if let Some(last_price) = crate::storage::get_oracle_last_price(&env) {
+                    let deviation = compute_deviation_bps(price, last_price).unwrap_or_else(|| {
+                        clear_reentrancy_guard(&env);
+                        env.panic_with_error(ContractError::OraclePriceInvalid)
+                    });
+                    if deviation > cfg.max_deviation_bps {
+                        clear_reentrancy_guard(&env);
+                        env.panic_with_error(ContractError::OraclePriceDeviation);
+                    }
+                }
+            }
+
+            crate::storage::set_oracle_last_price(&env, price, now);
+            publish_oracle_price_accepted_event(&env, price, now);
+        }
+
+        // Wire the auction contract settlement hook if configured.
+        if let Some(auction_addr) = crate::storage::get_auction_contract(&env) {
+            let auction_client = AuctionClient::new(&env, &auction_addr);
+            let auction_recovered = auction_client.settle_default_liquidation(
+                &settlement_id,
+                &env.current_contract_address(),
+                &borrower,
+            );
+            if auction_recovered != recovered_amount {
+                clear_reentrancy_guard(&env);
+                env.panic_with_error(ContractError::InvalidAmount);
+            }
+        }
+
+        lifecycle::settle_default_liquidation(
+            env.clone(),
+            borrower,
+            recovered_amount,
+            settlement_id,
+            close_factor_bps,
+        );
+        clear_reentrancy_guard(&env);
+    }
+
+    // ── Auction contract admin ────────────────────────────────────────────────
+
+    /// Configure the auction contract address for default-liquidation hooks.
+    ///
+    /// When set, the credit contract records which auction contract is
+    /// authorized to participate in the liquidation settlement flow. This
+    /// address is stored in instance storage and can be updated by the admin.
+    ///
+    /// # Authorization
+    /// Admin only.
+    pub fn set_auction_contract(env: Env, auction_address: Address) {
+        assert_not_paused(&env);
+        require_admin_auth(&env);
+        crate::storage::set_auction_contract(&env, &auction_address);
+    }
+
+    /// Return the configured auction contract address, if set.
+    pub fn get_auction_contract(env: Env) -> Option<Address> {
+        crate::storage::get_auction_contract(&env)
+    }
+
+    // ── Close factor (partial liquidation cap) ────────────────────────────────
+
+    /// Set the protocol-level max close factor in basis points (admin only).
+    ///
+    /// This caps the `close_factor_bps` parameter accepted by
+    /// `settle_default_liquidation`. When set to e.g. `5_000`, no single
+    /// settlement can recover more than 50% of the outstanding debt, even
+    /// if the caller supplies a higher value. Defaults to `10_000` (full
+    /// liquidation) when never configured.
+    ///
+    /// # Validation
+    /// - `close_factor_bps` must be in `1..=10_000`.
+    ///
+    /// # Authorization
+    /// Admin only.
+    ///
+    /// # Events
+    /// Emits a `clsfctr` event with the new value.
+    pub fn set_close_factor_bps(env: Env, close_factor_bps: u32) {
+        require_admin_auth(&env);
+        if close_factor_bps == 0 || close_factor_bps > 10_000 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+        crate::storage::set_close_factor_bps(&env, close_factor_bps);
+        publish_close_factor_bps_set_event(&env, close_factor_bps);
+    }
+
+    /// Return the current protocol-level max close factor in basis points.
+    ///
+    /// Returns `10_000` if never configured by the admin.
+    pub fn get_close_factor_bps(env: Env) -> u32 {
+        crate::storage::get_close_factor_bps(&env)
+    }
+
+    // ── Oracle circuit-breaker admin ──────────────────────────────────────────
+
+    /// Configure the oracle price-feed circuit breaker thresholds.
+    ///
+    /// Once set, `settle_default_liquidation` requires a valid `oracle_price`
+    /// that is within `max_deviation_bps` of the last accepted price and whose
+    /// stored timestamp is no older than `max_age_seconds`.
+    ///
+    /// # Validation
+    /// - `max_deviation_bps` must be in `1..=10_000`.
+    /// - `max_age_seconds` must be > 0.
+    ///
+    /// # Authorization
+    /// Admin only.
+    pub fn set_oracle_config(env: Env, max_deviation_bps: u32, max_age_seconds: u64) {
+        assert_not_paused(&env);
+        require_admin_auth(&env);
+
+        if max_deviation_bps == 0 || max_deviation_bps > 10_000 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+        if max_age_seconds == 0 {
+            env.panic_with_error(ContractError::InvalidAmount);
+        }
+
+        set_oracle_config(
+            &env,
+            &OracleConfig {
+                max_deviation_bps,
+                max_age_seconds,
+            },
+        );
+        publish_oracle_config_set_event(&env, max_deviation_bps, max_age_seconds);
+    }
+
+    /// Return the current oracle circuit-breaker configuration, if set.
+    pub fn get_oracle_config(env: Env) -> Option<OracleConfig> {
+        get_oracle_config(&env)
+    }
+
+    // ── Borrower blocklist ────────────────────────────────────────────────────
+
+    /// Block a single borrower. Admin only. Idempotent.
+    ///
+    /// # Events
+    /// Emits `BorrowerBlockedEvent { blocked: true }`.
+    pub fn block_borrower(env: Env, admin: Address, borrower: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        storage_set_borrower_blocked(&env, &borrower, true);
+        publish_borrower_blocked_event(&env, &borrower, true);
+    }
+
+    /// Unblock a single borrower. Admin only. Idempotent.
+    ///
+    /// # Events
+    /// Emits `BorrowerBlockedEvent { blocked: false }`.
+    pub fn unblock_borrower(env: Env, admin: Address, borrower: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        set_borrower_unblocked(&env, &borrower);
+        publish_borrower_blocked_event(&env, &borrower, false);
+    }
+
+    /// Return true if `borrower` is currently on the blocklist.
+    /// Read-only; no auth required; no event emitted.
+    pub fn is_borrower_blocked(env: Env, borrower: Address) -> bool {
+        storage_is_borrower_blocked(&env, &borrower)
+    }
+
+    /// Block up to `BULK_BLOCK_MAX` borrowers in a single call. Admin only.
+    ///
+    /// # Panics
+    /// If `borrowers.len() > BULK_BLOCK_MAX`.
+    ///
+    /// # Events
+    /// Emits one `BorrowerBlockedEvent { blocked: true }` per borrower.
+    pub fn bulk_block_borrowers(env: Env, admin: Address, borrowers: soroban_sdk::Vec<Address>) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        if borrowers.len() > BULK_BLOCK_MAX {
+            panic!(
+                "bulk_block_borrowers: exceeds max batch size of {}",
+                BULK_BLOCK_MAX
+            );
+        }
+        for borrower in borrowers.iter() {
+            storage_set_borrower_blocked(&env, &borrower, true);
+            publish_borrower_blocked_event(&env, &borrower, true);
+        }
+    }
+
+    /// Materialize interest accrual for a bounded list of borrowers.
+    ///
+    /// No auth is required: the call only updates accounting state for lines
+    /// that already exist and are `Active`. Missing lines and non-active lines
+    /// are skipped without reverting the whole batch. Only non-zero accruals
+    /// emit `InterestAccruedEvent`.
+    pub fn accrue_batch(env: Env, borrowers: Vec<Address>) {
+        assert_not_paused(&env);
+        if borrowers.len() as u32 > ACCRUE_BATCH_MAX {
+            panic!(
+                "accrue_batch: exceeds max batch size of {}",
+                ACCRUE_BATCH_MAX
+            );
+        }
+
+        accrual::accrue_batch(&env, borrowers);
+    }
+
+    /// Return the credit line for `borrower`, or `None` if no line exists.
+    ///
+    /// No authentication required — this is a pure read with no side effects.
+    /// Accrual is lazy; pending interest since the last checkpoint is not applied here.
     pub fn get_credit_line(env: Env, borrower: Address) -> Option<CreditLineData> {
         query::get_credit_line(env, borrower)
     }
