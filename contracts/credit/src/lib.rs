@@ -24,7 +24,7 @@
 //!   into the configured `LiquidityToken`.
 //! - **Repay** — `repay_credit` is **not pause-gated**: borrowers must always
 //!   be able to deleverage. Interest-first allocation with optional
-//!   protocol-fee-on-interest routed to the treasury accumulator.
+//!   protocol-fee-on-interest split between treasury and bounty accumulators.
 //! - **Risk update** — `update_risk_parameters` either computes the new rate
 //!   from `risk_score` via the piecewise-linear formula (if configured) or
 //!   accepts an admin-supplied rate; both paths are clamped and gated by the
@@ -100,6 +100,7 @@ mod borrow;
 mod collateral;
 mod config;
 pub mod events;
+mod fees;
 mod freeze;
 mod lifecycle;
 pub mod math_utils;
@@ -666,15 +667,7 @@ impl Credit {
                         &contract_address,
                         &fee,
                     );
-                    crate::storage::add_treasury_balance(&env, fee);
-                    crate::events::publish_fee_accrued_event(
-                        &env,
-                        crate::events::FeeAccruedEvent {
-                            borrower: borrower.clone(),
-                            fee_amount: fee,
-                            new_treasury_balance: crate::storage::get_treasury_balance(&env),
-                        },
-                    );
+                    crate::fees::accrue_protocol_fee(&env, &borrower, fee);
                 }
 
                 let reserve_amount = effective_repay.saturating_sub(fee);
@@ -1036,6 +1029,66 @@ impl Credit {
     /// Get configured treasury address, if any.
     pub fn get_treasury(env: Env) -> Option<Address> {
         crate::storage::get_treasury_address(&env)
+    }
+
+    /// Set the treasury share of skimmed protocol fees in basis points (admin only).
+    ///
+    /// `treasury_share_bps` must be in `0..=10_000`. The bounty pool receives the
+    /// remainder of each fee after the treasury portion is floored. When unset,
+    /// the default is `10_000` (100 % treasury, backward compatible).
+    pub fn set_treasury_fee_share_bps(env: Env, treasury_share_bps: u32) {
+        require_admin_auth(&env);
+        if treasury_share_bps > crate::fees::MAX_FEE_SHARE_BPS {
+            env.panic_with_error(crate::types::ContractError::Overflow);
+        }
+        crate::storage::set_treasury_fee_share_bps(&env, treasury_share_bps);
+    }
+
+    /// Get configured treasury fee share in basis points.
+    ///
+    /// Returns `None` when unset; callers should treat that as 100 % treasury.
+    pub fn get_treasury_fee_share_bps(env: Env) -> Option<u32> {
+        crate::storage::get_treasury_fee_share_bps(&env)
+    }
+
+    /// Configure the bounty pool address where withdrawn bounty fees will be sent (admin only).
+    pub fn set_bounty(env: Env, admin: Address, bounty: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+        crate::storage::set_bounty_address(&env, &bounty);
+    }
+
+    /// Get configured bounty pool address, if any.
+    pub fn get_bounty(env: Env) -> Option<Address> {
+        crate::storage::get_bounty_address(&env)
+    }
+
+    /// Withdraw accumulated bounty pool balance to configured bounty address (admin only).
+    pub fn withdraw_bounty(env: Env, admin: Address) {
+        admin.require_auth();
+        require_admin_auth(&env);
+
+        let bounty_addr = crate::storage::get_bounty_address(&env)
+            .unwrap_or_else(|| env.panic_with_error(crate::types::ContractError::BountyNotSet));
+
+        let amount = crate::storage::get_bounty_balance(&env);
+        if amount == 0 {
+            return;
+        }
+
+        let token_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::LiquidityToken)
+            .unwrap_or_else(|| {
+                env.panic_with_error(crate::types::ContractError::MissingLiquidityToken)
+            });
+
+        let token_client = token::Client::new(&env, &token_address);
+        let contract_address = env.current_contract_address();
+        token_client.transfer(&contract_address, &bounty_addr, &amount);
+
+        crate::storage::clear_bounty_balance(&env);
     }
 
     /// Withdraw accumulated treasury balance to configured treasury address (admin only).

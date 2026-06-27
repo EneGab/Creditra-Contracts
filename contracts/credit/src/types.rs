@@ -133,6 +133,7 @@ pub enum CreditStatus {
 /// | 38   | `OraclePriceDeviation`        | Oracle price deviation exceeds the configured maximum |
 /// | 39   | `InsufficientCollateralBalance` | Borrower collateral balance cannot cover withdrawal |
 /// | 40   | `BorrowerFrozen`               | Borrower's draws are temporarily frozen until expiry |
+/// | 41   | `BountyNotSet`                 | Bounty pool address is not configured |
 #[soroban_sdk::contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -217,6 +218,8 @@ pub enum ContractError {
     InsufficientCollateralBalance = 39,
     /// Borrower's draws are temporarily frozen until the specified expiry timestamp.
     BorrowerFrozen = 40,
+    /// Bounty pool address is not configured when attempting a bounty withdrawal.
+    BountyNotSet = 41,
 }
 
 /// Stored credit line data for a borrower.
@@ -385,6 +388,8 @@ pub struct ProtocolSummary {
     pub total_collateral: i128,
     /// Accumulated protocol fees awaiting treasury withdrawal.
     pub treasury_balance: i128,
+    /// Accumulated bounty pool fees awaiting bounty withdrawal.
+    pub bounty_balance: i128,
 }
 
 /// Protocol summary returned by the specific query view for GrantFox campaign.

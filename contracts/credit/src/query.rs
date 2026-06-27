@@ -48,6 +48,7 @@ pub fn get_protocol_summary(env: Env) -> ProtocolSummary {
         total_utilized: crate::storage::get_total_utilized(&env),
         total_collateral: crate::storage::get_total_collateral(&env),
         treasury_balance: crate::storage::get_treasury_balance(&env),
+        bounty_balance: crate::storage::get_bounty_balance(&env),
     }
 }
 
