@@ -55,5 +55,6 @@ echo "==> Running budget-regression tests …"
 exec cargo test \
   --manifest-path "${CRATE}/Cargo.toml" \
   --features instrument \
+  --test instrument \
   --test budget_regression \
   2>&1

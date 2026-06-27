@@ -45,5 +45,5 @@ jobs:
 
       - name: Run budget-regression tests
         run: |
-          cargo test --manifest-path contracts/credit/Cargo.toml --features instrument --lib instrument -- --nocapture
+          cargo test --manifest-path contracts/credit/Cargo.toml --features instrument --test instrument -- --nocapture
           cargo test --manifest-path contracts/credit/Cargo.toml --features instrument --test budget_regression -- --nocapture

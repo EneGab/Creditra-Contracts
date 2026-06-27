@@ -1,6 +1,4 @@
-use creditra_credit::instrument::{
-    self, entrypoint, setup_credit_harness, BudgetBaseline, BudgetSample,
-};
+use creditra_credit::instrument::{self, entrypoint, setup_credit_harness, BudgetSample};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, Env,
@@ -192,17 +190,4 @@ fn budget_close_credit_line() {
         credit.close_credit_line(&borrower, &admin);
     });
     check(entrypoint::CLOSE_CREDIT_LINE, sample);
-}
-
-// ── instrument module integration ───────────────────────────────────────────
-#[test]
-fn instrument_entrypoint_catalog_matches_regression_matrix() {
-    assert!(entrypoint::ALL.contains(&entrypoint::INIT));
-    assert_eq!(entrypoint::ALL.len(), 15);
-}
-
-#[test]
-fn instrument_baseline_builder_roundtrip() {
-    let row = BudgetBaseline::new(entrypoint::DRAW_CREDIT, 1, 2);
-    assert_eq!(row.entrypoint, entrypoint::DRAW_CREDIT);
 }
