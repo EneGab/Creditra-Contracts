@@ -144,9 +144,9 @@ use crate::storage::{
 };
 use crate::storage::{get_oracle_config, set_oracle_config};
 use crate::types::{
-    ContractError, CreditLineData, CreditStatus, FreezeReason, GracePeriodConfig,
-    GraceWaiverMode, OracleConfig, ProtocolConfig, ProtocolSummary, ProtocolSummaryView,
-    RateChangeConfig, RateFormulaConfig, RateFormulaConfigEvent,
+    ContractError, CreditLineData, CreditStatus, GracePeriodConfig, GraceWaiverMode,
+    OracleConfig, ProtocolConfig, ProtocolSummary, ProtocolSummaryView, RateChangeConfig,
+    RateFormulaConfig, RateFormulaConfigEvent,
 };
 use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, BytesN, Env, Symbol, Vec};
 
@@ -4478,7 +4478,7 @@ mod test_mock_liquidity_token {
         #[should_panic(expected = "Error(Contract, #19)")]
         fn draw_credit_reverts_when_frozen() {
             let env = Env::default();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, _admin, borrower, _contract_id) = setup(&env);
             client.freeze_draws(&FreezeReason::LiquidityReserve);
             client.draw_credit(&borrower, &100_i128);
         }
@@ -4535,7 +4535,7 @@ mod test_mock_liquidity_token {
         #[test]
         fn draw_credit_succeeds_after_unfreeze() {
             let env = Env::default();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, _admin, borrower, _contract_id) = setup(&env);
             client.freeze_draws(&FreezeReason::LiquidityReserve);
             client.unfreeze_draws();
             client.draw_credit(&borrower, &100_i128);
@@ -4669,16 +4669,27 @@ mod test_mock_liquidity_token {
         use soroban_sdk::testutils::Ledger;
         use soroban_sdk::{Symbol, TryFromVal, TryIntoVal};
 
+        fn setup(env: &Env) -> (CreditClient<'_>, Address, Address, Address) {
+            env.mock_all_auths();
+            let admin = Address::generate(env);
+            let borrower = Address::generate(env);
+            let contract_id = env.register(Credit, ());
+            let client = CreditClient::new(env, &contract_id);
+            client.init(&admin);
+            client.open_credit_line(&borrower, &1_000_i128, &300_u32, &70_u32);
+            (client, admin, borrower, contract_id)
+        }
+
         /// freeze_borrower_until sets the freeze and stores the expiry.
         #[test]
         fn freeze_borrower_until_sets_freeze() {
             let env = Env::default();
-            env.mock_all_auths();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, admin, borrower, _contract_id) = setup(&env);
 
             let now = 1_700_000_000u64;
+            env.ledger().with_mut(|li| li.timestamp = now);
 
-            client.freeze_borrower_until(&_admin, &borrower, &(now + 3600));
+            client.freeze_borrower_until(&admin, &borrower, &(now + 3600));
 
             assert!(client.is_borrower_frozen(&borrower));
             assert_eq!(
@@ -4692,26 +4703,39 @@ mod test_mock_liquidity_token {
         #[should_panic(expected = "Error(Contract, #5)")]
         fn freeze_borrower_until_past_ts_reverts() {
             let env = Env::default();
-            env.mock_all_auths();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, admin, borrower, _contract_id) = setup(&env);
 
             let now = 1_700_000_000u64;
-            // expiry_ts <= now should revert with InvalidAmount
-            client.freeze_borrower_until(&_admin, &borrower, &now);
+            env.ledger().with_mut(|li| li.timestamp = now);
+            client.freeze_borrower_until(&admin, &borrower, &now);
         }
 
         /// Freeze expires automatically when ledger timestamp passes expiry_ts.
         #[test]
+        fn freeze_auto_expires_after_ts() {
+            let env = Env::default();
+            let (client, admin, borrower, _contract_id) = setup(&env);
+
+            let start = 1_700_000_000u64;
+            env.ledger().with_mut(|li| li.timestamp = start);
+
+            client.freeze_borrower_until(&admin, &borrower, &(start + 3600));
+            assert!(client.is_borrower_frozen(&borrower));
+
+            env.ledger().with_mut(|li| li.timestamp = start + 3600);
+            assert!(!client.is_borrower_frozen(&borrower));
+        }
 
         /// freeze_borrower_until requires admin auth.
         #[test]
         #[should_panic]
         fn freeze_borrower_until_requires_auth() {
             let env = Env::default();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, _admin, borrower, _contract_id) = setup(&env);
             let non_admin = Address::generate(&env);
 
             let now = 1_700_000_000u64;
+            env.ledger().with_mut(|li| li.timestamp = now);
             client.freeze_borrower_until(&non_admin, &borrower, &(now + 3600));
         }
 
@@ -4719,15 +4743,15 @@ mod test_mock_liquidity_token {
         #[test]
         fn unfreeze_borrower_lifts_freeze() {
             let env = Env::default();
-            env.mock_all_auths();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, admin, borrower, _contract_id) = setup(&env);
 
             let now = 1_700_000_000u64;
+            env.ledger().with_mut(|li| li.timestamp = now);
 
-            client.freeze_borrower_until(&_admin, &borrower, &(now + 7200));
+            client.freeze_borrower_until(&admin, &borrower, &(now + 7200));
             assert!(client.is_borrower_frozen(&borrower));
 
-            client.unfreeze_borrower(&_admin, &borrower);
+            client.unfreeze_borrower(&admin, &borrower);
             assert!(!client.is_borrower_frozen(&borrower));
             assert_eq!(client.get_borrower_frozen_until(&borrower), None);
         }
@@ -4736,7 +4760,7 @@ mod test_mock_liquidity_token {
         #[test]
         fn is_borrower_frozen_defaults_false() {
             let env = Env::default();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, _admin, borrower, _contract_id) = setup(&env);
 
             assert!(!client.is_borrower_frozen(&borrower));
             assert_eq!(client.get_borrower_frozen_until(&borrower), None);
@@ -4746,13 +4770,13 @@ mod test_mock_liquidity_token {
         #[test]
         fn freeze_emits_borrower_frozen_event() {
             let env = Env::default();
-            env.mock_all_auths();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, admin, borrower, _contract_id) = setup(&env);
 
             let now = 1_700_000_000u64;
             let expiry = now + 3600;
+            env.ledger().with_mut(|li| li.timestamp = now);
 
-            client.freeze_borrower_until(&_admin, &borrower, &expiry);
+            client.freeze_borrower_until(&admin, &borrower, &expiry);
 
             let events = env.events().all();
             let (_contract, topics, data) = events.last().unwrap();
@@ -4769,36 +4793,19 @@ mod test_mock_liquidity_token {
         fn draw_credit_reverts_when_borrower_frozen() {
             let env = Env::default();
             env.mock_all_auths();
-            let (client, _admin, borrower) = setup(&env);
+            let (client, admin, borrower, contract_id) = setup(&env);
 
             let now = 1_700_000_000u64;
+            env.ledger().with_mut(|li| li.timestamp = now);
 
-            client.open_credit_line(&borrower, &1_000_i128, &300_u32, &50_u32);
+            let token_id = env.register_stellar_asset_contract_v2(Address::generate(&env));
+            let token = token_id.address();
+            client.set_liquidity_token(&token);
+            soroban_sdk::token::StellarAssetClient::new(&env, &token).mint(&contract_id, &1_000_i128);
 
-            // Freeze the borrower
-            client.freeze_borrower_until(&_admin, &borrower, &(now + 3600));
-
-            // Draw should revert with BorrowerFrozen (#40)
+            client.freeze_borrower_until(&admin, &borrower, &(now + 3600));
             client.draw_credit(&borrower, &100_i128);
         }
-    }
-
-    fn freeze_auto_expires_after_ts() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let (client, _admin, borrower) = setup(&env);
-
-        let start = 1_700_000_000u64;
-
-        // Freeze for 1 hour
-        client.freeze_borrower_until(&_admin, &borrower, &(start + 3600));
-        assert!(client.is_borrower_frozen(&borrower));
-
-        // Advance past expiry
-        env.ledger().set_timestamp(start + 3600);
-
-        // Should now be unfrozen
-        assert!(!client.is_borrower_frozen(&borrower));
     }
 
     #[cfg(test)]
