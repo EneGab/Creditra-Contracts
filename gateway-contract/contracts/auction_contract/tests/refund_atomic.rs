@@ -305,12 +305,11 @@ fn round_robin_refund_per_outbid_step() {
     let bidders: [Address; 3] = [a, b, c];
 
     // (bidder_index, amount) — each step strictly outbids the previous holder.
-    let steps: [(usize, i128); 6] =
-        [(0, 50), (1, 100), (2, 200), (0, 350), (1, 600), (2, 900)];
+    let steps: [(usize, i128); 6] = [(0, 50), (1, 100), (2, 200), (0, 350), (1, 600), (2, 900)];
 
     let mut prev: Option<(Address, i128)> = None;
 
-    for &(idx, amount) in &steps {
+    for (idx, amount) in steps {
         let bidder = &bidders[idx];
         client.place_bid(&aid, bidder, &amount);
 
